@@ -39,8 +39,14 @@ from pathlib import Path
 from typing import Any
 
 CACHE_DIR = Path("data/esm")
-DEFAULT_MODEL = "esm2_t33_650M_UR50D"
-SMALL_MODEL = "esm2_t12_35M_UR50D"
+SMALL_MODEL = "esm2_t12_35M_UR50D"   # ~135 MB, benchmarked, the default
+LARGE_MODEL = "esm2_t33_650M_UR50D"  # ~2.5 GB download, better but slow to get
+
+# Default to the small model on purpose. The 650M weights are a 2.5 GB download
+# that will stall a demo on conference wifi, and the numbers in the README were
+# measured with the 35M model. Override deliberately:
+#   VN_ESM_MODEL=esm2_t33_650M_UR50D
+DEFAULT_MODEL = os.getenv("VN_ESM_MODEL") or SMALL_MODEL
 MAX_LEN = 1022  # 1024 minus the BOS/EOS tokens
 
 
@@ -193,10 +199,15 @@ def score_variant(
     mt_sequence: str,
     variant: str,
     *,
-    model: str = DEFAULT_MODEL,
+    model: str | None = None,
     accession: str = "seq",
 ) -> VariantScore:
-    """Score one substitution given as e.g. "T315I"."""
+    """Score one substitution given as e.g. "T315I".
+
+    `model=None` resolves DEFAULT_MODEL at call time, so overriding the module
+    attribute works. Binding it as a default argument would freeze it at import
+    and silently trigger the 2.5 GB download the override was meant to avoid.
+    """
     import re
     m = re.match(r"^([A-Z])(\d+)([A-Z])$", variant.strip().upper())
     if not m:
@@ -207,7 +218,8 @@ def score_variant(
             f"{variant}: sequence has {wt_sequence[pos-1]} at {pos}, not {ref}"
         )
     mar = masked_marginals(
-        wt_sequence, [pos], model_name=model, accession=accession, verbose=False
+        wt_sequence, [pos], model_name=model or DEFAULT_MODEL,
+        accession=accession, verbose=False,
     )
     row = (mar.get("log_probs") or {}).get(str(pos))
     if not row:
@@ -217,7 +229,7 @@ def score_variant(
         delta_ll=row[alt] - row[ref],
         ll_ref=row[ref],
         ll_alt=row[alt],
-        model=model,
+        model=model or DEFAULT_MODEL,
         position=pos,
     )
 
