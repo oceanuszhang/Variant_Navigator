@@ -21,8 +21,12 @@ TIMEOUT = 30
 # instead of depending on search ranking.
 KNOWN_ACCESSIONS = {
     "EGFR": "P00533",        # Homo sapiens epidermal growth factor receptor
-    "CYP51": "P10613",       # fallback; wheat-rust CYP51 resolved via search
-    "ERG11": "P10613",       # fungal CYP51 synonym
+    "RPOB": "P9WGY9",        # M. tuberculosis H37Rv RNA polymerase beta subunit
+    # Zymoseptoria tritici sterol 14-alpha-demethylase. UniProt holds several
+    # CYP51 alleles for this species (A4ULI5 515 aa, A4ULJ1 517 aa, B2L2K3
+    # 364 aa); A4ULI5 is pinned because it carries Tyr137 and is full length.
+    "CYP51": "A4ULI5",
+    "ERG11": "A4ULI5",       # fungal CYP51 synonym
 }
 
 # Residue-level features worth keeping as "where a drug could bind".

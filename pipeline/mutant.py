@@ -121,18 +121,42 @@ def parse_variant(notation: str) -> list[Substitution | Deletion]:
     return edits
 
 
+def renumber(notation: str, offset: int) -> str:
+    """Shift every position in a variant notation by `offset`.
+
+    Needed because clinical nomenclature and UniProt numbering disagree for some
+    targets. M. tuberculosis rpoB is the live example: the TB literature's S450L
+    sits at position 456 of UniProt P9WGY9, an offset of +6. Applying the
+    clinical number directly hits Thr450 and silently mutates the wrong residue.
+    """
+    edits = parse_variant(notation)
+    out: list[str] = []
+    for edit in edits:
+        if isinstance(edit, Substitution):
+            out.append(f"{edit.wt}{edit.position + offset}{edit.mt}")
+        else:
+            out.append(f"{edit.start + offset}_{edit.end + offset}del")
+    return "/".join(out)
+
+
 def apply_variant(
     wildtype: str,
     notation: str,
     *,
     strict: bool = True,
+    offset: int = 0,
 ) -> Mutant:
     """Return the mutant sequence for `notation` applied to `wildtype`.
 
     strict=True (default) raises if the stated wildtype residue does not match
     the sequence — that mismatch usually means a wrong isoform or offset, which
     would silently poison every downstream score.
+
+    offset shifts the notation's positions into the sequence's own numbering;
+    see renumber() for why that is sometimes necessary.
     """
+    if offset:
+        notation = renumber(notation, offset)
     wt = wildtype.strip().upper().replace("\n", "")
     if not wt or set(wt) - AA - {"X", "U", "B", "Z", "O"}:
         bad = sorted(set(wt) - AA - {"X", "U", "B", "Z", "O"})

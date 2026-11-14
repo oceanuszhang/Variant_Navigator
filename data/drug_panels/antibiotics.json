@@ -1,0 +1,15 @@
+[
+  {"name": "rifampicin", "smiles": "C[C@H]1/C=C/C=C(\\C(=O)NC2=C(C(=C3C(=C2O)C(=C(C4=C3C(=O)[C@](O4)(O/C=C/[C@@H]([C@H]([C@H]([C@@H]([C@@H]([C@@H]([C@H]1O)C)O)C)OC(=O)C)C)OC)C)C)O)O)/C=N/N5CCN(CC5)C)/C", "target": "RpoB", "class": "rifamycin", "approval": "FDA 1971", "pubchem_cid": 135398735, "binds_target": true},
+  {"name": "rifabutin", "smiles": "C[C@H]1/C=C/C=C(\\C(=O)NC2=C(C3=C(C4=C(C(=C3O)C)O[C@@](C4=O)(O/C=C/[C@@H]([C@H]([C@H]([C@@H]([C@@H]([C@@H]([C@H]1O)C)O)C)OC(=O)C)C)OC)C)C5=NC6(CCN(CC6)CC(C)C)N=C25)O)/C", "target": "RpoB", "class": "rifamycin", "approval": "FDA 1992", "pubchem_cid": 135415564, "binds_target": true},
+  {"name": "rifapentine", "smiles": "C[C@H]1/C=C/C=C(\\C(=O)NC2=C(C(=C3C(=C2O)C(=C(C4=C3C(=O)[C@](O4)(O/C=C/[C@@H]([C@H]([C@H]([C@@H]([C@@H]([C@@H]([C@H]1O)C)O)C)OC(=O)C)C)OC)C)C)O)O)/C=N/N5CCN(CC5)C6CCCC6)/C", "target": "RpoB", "class": "rifamycin", "approval": "FDA 1998", "pubchem_cid": 135403821, "binds_target": true},
+  {"name": "isoniazid", "smiles": "C1=CN=CC=C1C(=O)NN", "target": "InhA/KatG", "class": "off-target control", "approval": "FDA 1952", "pubchem_cid": 3767, "binds_target": false},
+  {"name": "ethambutol", "smiles": "CC[C@@H](CO)NCCN[C@@H](CC)CO", "target": "EmbB", "class": "off-target control", "approval": "FDA 1967", "pubchem_cid": 14052, "binds_target": false},
+  {"name": "pyrazinamide", "smiles": "C1=CN=C(C=N1)C(=O)N", "target": "PncA/RpsA", "class": "off-target control", "approval": "FDA 1955", "pubchem_cid": 1046, "binds_target": false},
+  {"name": "moxifloxacin", "smiles": "COC1=C2C(=CC(=C1N3C[C@@H]4CCCN[C@@H]4C3)F)C(=O)C(=CN2C5CC5)C(=O)O", "target": "GyrA/GyrB", "class": "off-target control", "approval": "FDA 1999", "pubchem_cid": 152946, "binds_target": false},
+  {"name": "levofloxacin", "smiles": "C[C@H]1COC2=C3N1C=C(C(=O)C3=CC(=C2N4CCN(CC4)C)F)C(=O)O", "target": "GyrA/GyrB", "class": "off-target control", "approval": "FDA 1996", "pubchem_cid": 149096, "binds_target": false},
+  {"name": "linezolid", "smiles": "CC(=O)NC[C@H]1CN(C(=O)O1)C2=CC(=C(C=C2)N3CCOCC3)F", "target": "23S rRNA", "class": "off-target control", "approval": "FDA 2000", "pubchem_cid": 441401, "binds_target": false},
+  {"name": "bedaquiline", "smiles": "CN(C)CC[C@@](C1=CC=CC2=CC=CC=C21)([C@H](C3=CC=CC=C3)C4=C(N=C5C=CC(=CC5=C4)Br)OC)O", "target": "AtpE", "class": "off-target control", "approval": "FDA 2012", "pubchem_cid": 5388906, "binds_target": false},
+  {"name": "streptomycin", "smiles": "C[C@H]1[C@@]([C@H]([C@@H](O1)O[C@@H]2[C@H]([C@@H]([C@H]([C@@H]([C@H]2O)O)N=C(N)N)O)N=C(N)N)O[C@H]3[C@H]([C@@H]([C@H]([C@@H](O3)CO)O)O)NC)(C=O)O", "target": "RpsL/16S rRNA", "class": "off-target control", "approval": "FDA 1946", "pubchem_cid": 19649, "binds_target": false},
+  {"name": "clofazimine", "smiles": "CC(C)N=C1C=C2C(=NC3=CC=CC=C3N2C4=CC=C(C=C4)Cl)C=C1NC5=CC=C(C=C5)Cl", "target": "membrane/NDH-2", "class": "off-target control", "approval": "FDA 1986", "pubchem_cid": 2794, "binds_target": false},
+  {"name": "ethionamide", "smiles": "CCC1=NC=CC(=C1)C(=S)N", "target": "InhA", "class": "off-target control", "approval": "FDA 1965", "pubchem_cid": 2761171, "binds_target": false}
+]

@@ -1,0 +1,22 @@
+{
+  "id": "rpob_d435v",
+  "mode": "antimicrobial",
+  "gene": "rpoB",
+  "uniprot": "P9WGY9",
+  "organism": "Mycobacterium tuberculosis",
+  "organism_id": 83332,
+  "variant": "D435V",
+  "numbering": "clinical (TB literature)",
+  "numbering_offset": 6,
+  "uniprot_variant": "D441V",
+  "wt_residue_check": {"position": 441, "expected": "D", "note": "clinical D435 = UniProt P9WGY9 position 441"},
+  "context": "Lower-level rifampicin resistance, strongly enriched among rifampicin-resistant / rifabutin-susceptible clinical isolates (OR 17.2).",
+  "panel": "antibiotics",
+  "expected": {
+    "rifampicin": "fail",
+    "rifabutin": "uncertain",
+    "isoniazid": "n/a"
+  },
+  "notes": "STRETCH CASE, NOT A PASS/FAIL GATE. Whether D435V truly preserves rifabutin activity is disputed: clinical isolate data strongly associate it with rifabutin susceptibility, but biochemistry conflicts - one isogenic study saw an MIC rise for rifampicin only, another saw IC50 rises for both. Discordance may be an artefact of the 0.5 mg/L critical concentration. Good demo material: the pipeline can offer a binding-level opinion on a genuinely open question, which is a stronger story than re-deriving settled facts.",
+  "source": "Farhat et al. 1000-isolate study; 2023 meta-analysis of 4333 isolates"
+}

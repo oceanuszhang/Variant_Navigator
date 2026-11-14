@@ -22,7 +22,11 @@ from pipeline.fetch import fetch_protein
 from pipeline.mutant import VariantError, apply_variant
 
 TEST_CASE_DIR = Path("data/test_cases")
-DEFAULT_PANEL = {"oncology": "oncology", "agriculture": "fungicides"}
+DEFAULT_PANEL = {
+    "oncology": "oncology",
+    "agriculture": "fungicides",
+    "antimicrobial": "antibiotics",
+}
 
 
 def load_env(path: str | Path = ".env") -> None:
@@ -48,6 +52,7 @@ def run(
     panel: str | None = None,
     organism_id: int | None = None,
     expected: dict[str, str] | None = None,
+    offset: int = 0,
     use_agent: bool = True,
 ) -> dict[str, Any]:
     panel = panel or DEFAULT_PANEL.get(mode, "oncology")
@@ -60,12 +65,16 @@ def run(
 
     # 2 — apply the variant
     print("[2/5] applying variant…", end=" ", flush=True)
-    mutant = apply_variant(protein.sequence, variant)
+    mutant = apply_variant(protein.sequence, variant, offset=offset)
     pocket = protein.binding_positions()
     in_site = any(p in pocket for p in mutant.positions)
+    renumbered = (
+        f" [clinical {variant} -> UniProt "
+        f"{', '.join(str(s) for s in mutant.substitutions)}]" if offset else ""
+    )
     print(
         f"ok  ({', '.join(str(s) for s in mutant.substitutions) or variant}"
-        f"{'; in annotated binding site' if in_site else ''})"
+        f"{'; in annotated binding site' if in_site else ''}){renumbered}"
     )
 
     payload: dict[str, Any] = {
@@ -79,6 +88,7 @@ def run(
         "binding_residues": pocket,
         "in_binding_site": in_site,
         "mutated_positions": mutant.positions,
+        "numbering_offset": offset,
         "expected": expected or {},
         "skipped_stages": [],
     }
@@ -144,13 +154,16 @@ def run_test_case(name: str, *, use_agent: bool = True) -> dict[str, Any]:
     if not path.exists():
         raise FileNotFoundError(f"no test case {name!r} in {TEST_CASE_DIR}")
     case = json.loads(path.read_text())
+    # An explicit accession beats gene-name search: several of these targets have
+    # multiple alleles in UniProt and only some carry the residue we need.
     return run(
-        case["gene"],
+        case.get("uniprot") or case["gene"],
         case["variant"],
         case["mode"],
         panel=case.get("panel"),
         organism_id=case.get("organism_id"),
         expected=case.get("expected"),
+        offset=case.get("numbering_offset", 0),
         use_agent=use_agent,
     )
 
@@ -159,9 +172,19 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--gene", help="gene name or UniProt accession, e.g. EGFR / P00533")
     ap.add_argument("--variant", help="variant notation, e.g. T790M")
-    ap.add_argument("--mode", choices=["oncology", "agriculture"], default="oncology")
+    ap.add_argument(
+        "--mode",
+        choices=["oncology", "agriculture", "antimicrobial"],
+        default="oncology",
+    )
     ap.add_argument("--panel", help="override drug panel (name or path)")
     ap.add_argument("--organism-id", type=int, help="NCBI taxon id, to disambiguate genes")
+    ap.add_argument(
+        "--offset",
+        type=int,
+        default=0,
+        help="shift variant numbering into UniProt numbering (rpoB needs +6)",
+    )
     ap.add_argument("--test-case", help="run a benchmark case by id, or 'all'")
     ap.add_argument("--no-agent", action="store_true", help="force the local report renderer")
     args = ap.parse_args(argv)
@@ -171,8 +194,19 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         if args.test_case == "all":
+            failures = []
             for path in sorted(TEST_CASE_DIR.glob("*.json")):
-                run_test_case(path.stem, use_agent=use_agent)
+                try:
+                    run_test_case(path.stem, use_agent=use_agent)
+                except (VariantError, LookupError, ValueError) as exc:
+                    failures.append((path.stem, exc))
+                    print(f"  FAILED: {exc}")
+            print(f"\n{'=' * 66}")
+            total = len(list(TEST_CASE_DIR.glob('*.json')))
+            print(f"{total - len(failures)}/{total} cases ran")
+            for name, exc in failures:
+                print(f"  {name}: {exc}")
+            return 1 if failures else 0
         elif args.test_case:
             run_test_case(args.test_case, use_agent=use_agent)
         elif args.gene and args.variant:
@@ -182,6 +216,7 @@ def main(argv: list[str] | None = None) -> int:
                 args.mode,
                 panel=args.panel,
                 organism_id=args.organism_id,
+                offset=args.offset,
                 use_agent=use_agent,
             )
         else:
