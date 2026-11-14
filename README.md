@@ -61,7 +61,7 @@ python main.py --gene P00519 --variant G250L --mode oncology       # one variant
 | `predict.py` | **Working** — measurement when known, model otherwise |
 | `boltz_structure.py` | Stub — **boltz-api CLI v0.44.0 authenticated**; needs wiring, not credentials |
 | `drug_screen.py` | Stub — **cannot be built as designed**: Ptarmigan screens wild-type only |
-| `agent_report.py` | Partial — deterministic markdown renderer works, Keenable call pending docs |
+| `agent_report.py` | **Working** — deterministic renderer produces a complete report; the agent rewrite (Nebius) is optional |
 
 ## Data sources and structure
 
