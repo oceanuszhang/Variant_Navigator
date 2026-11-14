@@ -20,6 +20,8 @@ from typing import Any
 from pipeline import (
     agent_report,
     baseline,
+    dms,
+    predict,
     boltz_structure,
     drug_screen,
     esm2_score,
@@ -158,6 +160,24 @@ def run(
     except (RuntimeError, OSError) as exc:
         payload["skipped_stages"].append({"stage": "baseline", "reason": str(exc)})
         print(f"skipped ({exc})")
+
+    # 5b — trained net-growth model. Only ABL1/imatinib has measured data, so
+    # this is skipped (not faked) for every other target.
+    if protein.accession.upper() == "P00519":
+        print("[5b/6] trained model…", end=" ", flush=True)
+        try:
+            subs = mutant.substitutions
+            if len(subs) != 1:
+                raise RuntimeError("trained model covers single substitutions only")
+            s = subs[0]
+            pred = predict.predict_variant(s.position - offset, s.wt, s.mt)
+            payload["prediction"] = pred
+            val = pred.get("predicted_netgrowth", pred.get("measured_netgrowth"))
+            kind = "predicted" if pred["predicted"] else "MEASURED in screen"
+            print(f"netgrowth={val:+.5f} ({kind})")
+        except (RuntimeError, predict.PredictError, dms.DMSError) as exc:
+            payload["skipped_stages"].append({"stage": "model", "reason": str(exc)})
+            print(f"skipped ({exc})")
 
     # 6 — drug panel screen
     print("[6/6] drug screen…", end=" ", flush=True)

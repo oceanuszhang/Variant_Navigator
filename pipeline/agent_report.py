@@ -58,6 +58,33 @@ def render_markdown(payload: dict[str, Any]) -> str:
             f"- Model: {esm.get('model', 'n/a')}",
         ]
 
+    pred = payload.get("prediction") or {}
+    if pred:
+        val = pred.get("predicted_netgrowth", pred.get("measured_netgrowth"))
+        lines += ["", "## Net growth under imatinib (1200 nM)"]
+        if pred.get("predicted"):
+            lines += [
+                f"- Predicted net growth: **{val:+.5f}**",
+                f"- Percentile vs. the 4,925-variant screen: "
+                f"{pred.get('percentile_vs_screen')}%",
+                f"- Model: {pred.get('source')}",
+                "",
+                f"*Accuracy, measured:* Pearson r = **{pred.get('cv_pearson_r')}** under "
+                f"position-grouped cross-validation — {pred.get('cv_pearson_r', 0) / pred.get('ceiling_r', 1) * 100:.0f}% "
+                f"of the attainable ceiling ({pred.get('ceiling_r')}), MAE "
+                f"{pred.get('cv_mae')}. Useful for ranking variants, **not** as a "
+                "clinical threshold.",
+            ]
+        else:
+            lines += [
+                f"- **Measured** net growth: **{val:+.5f}**",
+                f"- Replicate spread: {pred.get('replicate_spread')}",
+                f"- Source: {pred.get('source')}",
+                "",
+                "*This variant is in the screen, so a real measurement is reported "
+                "instead of a prediction.*",
+            ]
+
     base = payload.get("baseline") or {}
     cells = [c for c in (base.get("cells") or []) if c.get("call") != "no_reference"]
     if cells:
@@ -90,11 +117,12 @@ def render_markdown(payload: dict[str, Any]) -> str:
         if not base.get("calibrated", False):
             lines += [
                 "",
-                "**Uncalibrated.** This is a geometric prior, not an efficacy "
-                "prediction: no log₂ fold change is reported because there is no "
-                "measured dose-response data to regress against yet. Distance is "
-                "also blind to chemistry — it cannot see that osimertinib was "
-                "designed to tolerate the T790M gatekeeper.",
+                "**Uncalibrated, and measurably weak.** This is a geometric prior, "
+                "not an efficacy prediction. Against 4,665 measured BCR-ABL "
+                "variants, distance alone scores Pearson r = 0.069 — under 0.5% "
+                "of the variance. It is blind to any mechanism that does not "
+                "touch the ligand: H396 escapes imatinib allosterically from "
+                "15.5 Å away. Use it to triage, not to decide.",
             ]
 
     if results:
