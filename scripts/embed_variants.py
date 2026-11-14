@@ -58,6 +58,13 @@ def main() -> int:
     ap.add_argument("--model", default=SMALL_MODEL)
     ap.add_argument("--batch", type=int, default=16)
     ap.add_argument("--limit", type=int, default=0, help="debug: only N variants")
+    ap.add_argument(
+        "--crop-end", type=int, default=0,
+        help="truncate the reference at this residue (e.g. 518 to reproduce the "
+             "source repo's abl_cds_translation.txt). Numbering is unaffected - "
+             "the 518-mer is P00519[1:518] at offset 0 - so this measures the "
+             "effect of ESM CONTEXT alone.",
+    )
     args = ap.parse_args()
 
     import numpy as np
@@ -73,6 +80,8 @@ def main() -> int:
     if args.limit:
         variants = variants[: args.limit]
     lo, hi = 1, min(len(seq), MAX_LEN)
+    if args.crop_end:
+        hi = min(hi, args.crop_end)
     crop = seq[lo - 1 : hi]
     print(f"crop {lo}-{hi} ({len(crop)} aa); kinase domain 242-512 is inside")
 
@@ -138,6 +147,8 @@ def main() -> int:
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     # A --limit run must never overwrite a full one: tag partial outputs.
     suffix = "_mutdiff" if not args.limit else f"_mutdiff_n{len(variants)}"
+    if args.crop_end:
+        suffix += f"_crop{hi}"
     stem = OUT_DIR / f"{UNIPROT}_{args.model}{suffix}"
     np.savez_compressed(
         f"{stem}.npz", X=X, y=y, groups=groups, rep1=rep1, rep2=rep2,
