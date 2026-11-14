@@ -1,3 +1,4 @@
+<<<<<<< Updated upstream
 # Core pipeline (fetch.py + mutant.py use the stdlib only)
 requests>=2.32.0
 
@@ -9,3 +10,11 @@ rdkit>=2024.3.1
 
 # Dev
 pytest>=8.0.0
+=======
+# Local experiment runner and prediction heads
+joblib>=1.4,<2
+modal>=1.5,<2
+numpy>=1.26,<3
+scikit-learn>=1.5,<2
+xgboost>=2.1,<4
+>>>>>>> Stashed changes

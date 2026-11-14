@@ -1,0 +1,25 @@
+{
+  "split": {
+    "random_seed": 42,
+    "strategy": "80/20 GroupShuffleSplit grouped by protein_start",
+    "training_rows": 3981,
+    "validation_rows": 944,
+    "training_positions": 216,
+    "validation_positions": 54
+  },
+  "range_definition": "prediction is between netgr_corr_rep1.high and netgr_corr_rep2.high, inclusive",
+  "models": {
+    "ridge": {
+      "validation_rows": 944,
+      "in_range_count": 88,
+      "in_range_percent": 9.322033898305085,
+      "mean_absolute_error": 0.021912304684519768
+    },
+    "xgboost": {
+      "validation_rows": 944,
+      "in_range_count": 114,
+      "in_range_percent": 12.076271186440678,
+      "mean_absolute_error": 0.01892682909965515
+    }
+  }
+}

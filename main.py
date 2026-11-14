@@ -1,49 +1,52 @@
 #!/usr/bin/env python3
-"""VariantNavigator — predict which drugs still work against a mutant target.
-
-    python main.py --gene EGFR --variant T790M --mode oncology
-    python main.py --test-case egfr_t790m
-    python main.py --test-case all
-
-Stages that are not wired up yet (ESM2, Boltz, Ptarmigan-1) are skipped with a
-note rather than aborting the run, so the pipeline always produces a report.
-"""
+"""Run the minimal BCR-ABL imatinib growth-prediction experiment."""
 
 from __future__ import annotations
 
 import argparse
-import json
+import subprocess
 import sys
 from pathlib import Path
-from typing import Any
 
+<<<<<<< Updated upstream
 from pipeline import agent_report, boltz_structure, drug_screen, esm2_score
 from pipeline.fetch import fetch_protein
 from pipeline.mutant import VariantError, apply_variant
+=======
+from pipeline.train_heads import train_and_evaluate
+>>>>>>> Stashed changes
 
-TEST_CASE_DIR = Path("data/test_cases")
-DEFAULT_PANEL = {
-    "oncology": "oncology",
-    "agriculture": "fungicides",
-    "antimicrobial": "antibiotics",
-}
-
-
-def load_env(path: str | Path = ".env") -> None:
-    """Minimal .env loader — avoids a python-dotenv dependency."""
-    p = Path(path)
-    if not p.exists():
-        return
-    import os
-
-    for line in p.read_text().splitlines():
-        line = line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, _, value = line.partition("=")
-        os.environ.setdefault(key.strip(), value.strip().strip("'\""))
+ROOT = Path(__file__).resolve().parent
+DEFAULT_SEQUENCE = ROOT / "data/cancer-exp/ABL1_NM_005157.6_DMS_reference_aa.txt"
+DEFAULT_DATA = ROOT / "data/datasets/abl_dms_netgrowth_1200nM.csv"
+DEFAULT_OUTPUT = ROOT / "output/cancer-exp"
 
 
+def generate_embeddings(
+    sequence_path: Path,
+    data_path: Path,
+    embeddings_path: Path,
+    batch_size: int,
+) -> None:
+    command = [
+        sys.executable,
+        "-m",
+        "modal",
+        "run",
+        str(ROOT / "pipeline/modal_esm.py"),
+        "--sequence-path",
+        str(sequence_path),
+        "--csv-path",
+        str(data_path),
+        "--output-path",
+        str(embeddings_path),
+        "--batch-size",
+        str(batch_size),
+    ]
+    subprocess.run(command, cwd=ROOT, check=True)
+
+
+<<<<<<< Updated upstream
 def run(
     gene: str,
     variant: str,
@@ -71,28 +74,33 @@ def run(
     renumbered = (
         f" [clinical {variant} -> UniProt "
         f"{', '.join(str(s) for s in mutant.substitutions)}]" if offset else ""
+=======
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--sequence", type=Path, default=DEFAULT_SEQUENCE)
+    parser.add_argument("--data", type=Path, default=DEFAULT_DATA)
+    parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT)
+    parser.add_argument("--batch-size", type=int, default=32)
+    parser.add_argument(
+        "--recompute-embeddings",
+        action="store_true",
+        help="rerun ESM-2 even when the cached embedding file exists",
+>>>>>>> Stashed changes
     )
-    print(
-        f"ok  ({', '.join(str(s) for s in mutant.substitutions) or variant}"
-        f"{'; in annotated binding site' if in_site else ''}){renumbered}"
+    parser.add_argument(
+        "--train-only",
+        action="store_true",
+        help="train from an existing embeddings.npz without calling Modal",
     )
+    args = parser.parse_args()
 
-    payload: dict[str, Any] = {
-        "gene": protein.gene,
-        "variant": variant,
-        "mode": mode,
-        "panel": panel,
-        "uniprot": protein.accession,
-        "organism": protein.organism,
-        "sequence_length": protein.length,
-        "binding_residues": pocket,
-        "in_binding_site": in_site,
-        "mutated_positions": mutant.positions,
-        "numbering_offset": offset,
-        "expected": expected or {},
-        "skipped_stages": [],
-    }
+    sequence_path = args.sequence.resolve()
+    data_path = args.data.resolve()
+    output_dir = args.output_dir.resolve()
+    embeddings_path = output_dir / "embeddings.npz"
+    output_dir.mkdir(parents=True, exist_ok=True)
 
+<<<<<<< Updated upstream
     # 3 — ESM2 sequence-model score
     print("[3/5] ESM2 scoring…", end=" ", flush=True)
     try:
@@ -224,6 +232,33 @@ def main(argv: list[str] | None = None) -> int:
     except (VariantError, LookupError, FileNotFoundError, ValueError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
+=======
+    if not sequence_path.exists():
+        parser.error(f"reference sequence not found: {sequence_path}")
+    if not data_path.exists():
+        parser.error(f"experiment CSV not found: {data_path}")
+
+    if args.train_only and not embeddings_path.exists():
+        parser.error(f"--train-only requires {embeddings_path}")
+
+    if not args.train_only and (args.recompute_embeddings or not embeddings_path.exists()):
+        print("[1/2] Generating frozen ESM-2 embeddings on Modal", flush=True)
+        generate_embeddings(sequence_path, data_path, embeddings_path, args.batch_size)
+    else:
+        print(f"[1/2] Reusing {embeddings_path}", flush=True)
+
+    print("[2/2] Training Ridge and XGBoost prediction heads", flush=True)
+    metrics = train_and_evaluate(embeddings_path, output_dir)
+
+    for model_name in ("ridge", "xgboost"):
+        result = metrics["models"][model_name]
+        print(
+            f"{model_name}: "
+            f"{result['in_range_percent']:.2f}% in replicate range; "
+            f"MAE={result['mean_absolute_error']:.6f}"
+        )
+    print(f"Results written to {output_dir}")
+>>>>>>> Stashed changes
     return 0
 
 
