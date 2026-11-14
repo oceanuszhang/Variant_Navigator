@@ -236,30 +236,46 @@ were deliberate and one is outstanding.
 
 ### The three deviations, and why
 
-**518-aa reference → full-length P00519 (1130 aa).** An earlier version of this
-README claimed the 518-aa reference would mutate the wrong residue in every row.
-**That was wrong, and it is corrected here.** The 518-mer is the source repo's
-own `data/Refs/ABL/abl_cds_translation.txt`, and it is P00519 truncated to
-residues 1–518:
+**518-aa reference → full-length P00519 — reverted, the 518-mer wins.**
+
+An earlier version of this README claimed the 518-aa reference would mutate the
+wrong residue in every row. **That was wrong twice over, and both errors are
+corrected here.**
+
+*First, it is numerically correct.* The 518-mer is the study reference shipped as
+`data/cancer-exp/ABL1_NM_005157.6_DMS_reference_aa.txt` (transcript
+`NM_005157.6`). It differs from UniProt P00519 **only at residues 1-27**, the
+alternative ABL1 N-terminus, and is identical from residue 28 onward:
 
 ```
-anchor tr[200:240] found in P00519 at index 200   ->  offset 0
-translation[315] = T                                   (gatekeeper, correct)
-across 270 DMS positions: 270 residue matches, 0 mismatches
+positions differing from P00519 : 24, all within residues 1-27
+identical from residue 28 onward : True
+DMS range 242-512 identical      : True
+DMS positions disagreeing        : 0 of 270
 ```
 
-So the 518-mer is **numerically safe** — the plan was right about that. The
-reason to use the full sequence is **ESM context, not correctness**: in a
-518-residue reference the DMS range 242–512 sits flush against the C-terminus,
-so residues near 512 have almost no right-hand context, while in the 1–1022 crop
-every scored residue has ~500 residues on both sides. More context usually helps
-a masked language model, but that is an empirical claim and has not been
-measured here — the 518 crop is a legitimate ablation to run.
+*Second, it performs better.* Same split, same seed, same model - the only
+difference is the reference:
 
-What *does* need the guard is the general case: `embed_variants.py` validates
-every variant against the reference residue before spending compute and refuses
-the run on a mismatch. That is what would catch a genuinely mis-anchored
-construct, which this one turned out not to be.
+| metric (seed 1, `hist_gbm`) | full context 1-1022 | **518-aa study reference** |
+| --- | --- | --- |
+| Spearman | 0.2602 | **0.2850** |
+| Pearson | 0.2878 | **0.3124** |
+| MAE | 0.01924 | **0.01911** |
+| in-range | 11.9% | 11.5% |
+
+So the longer sequence was not just unnecessary, it was slightly worse on three
+of four metrics. Plausibly the full-length protein adds long disordered regions
+outside the kinase domain that dilute the representation at the mutated residue
+rather than informing it - but that is a hypothesis, and the measurement is the
+point. **The study reference is the right default**, and
+`scripts/embed_variants.py --crop-end 518` reproduces it.
+
+The guard still earns its place for the general case: `embed_variants.py`
+validates every variant against the reference residue before spending compute
+and refuses the run on a mismatch. It is what would catch a genuinely
+mis-anchored construct - which this one was not.
+
 
 **XGBoost → sklearn HistGradientBoosting.** Equivalent algorithm, already
 installed, no new dependency. It also lost to ridge at every rung of the earlier
@@ -446,15 +462,29 @@ low percentage means the model is not yet as precise as repeating the
 experiment, not that it is broken. The width is printed next to it so the two
 are never confused.
 
-### The "518-aa reference" trap, avoided
+### Numbering: verified, not guessed
 
-The implementation plan this came from specified a *518-aa ABL1 reference*.
-**P00519 is 1130 aa.** Applying position 315 to a 518-residue sequence mutates
-the wrong residue in every row. `embed_variants.py` validates every variant
-against the reference residue before spending any compute and refuses the whole
-run on a mismatch — the difference between a result and 4,925 silently corrupted
-ones. This is the fourth numbering trap in this repo and the third that would
-have passed silently.
+Four conventions are in play across this repo (clinical EGFR, Arabidopsis ALS,
+ABL1a/1b, rpoB +6) and three of them would fail silently. For ABL1 the offsets
+were checked against the real sequences rather than assumed:
+
+| Source | Agrees with the DMS numbering |
+| --- | --- |
+| Study reference `NM_005157.6` (518 aa) | ✅ offset 0, 270/270 positions |
+| UniProt `P00519` (1130 aa) | ✅ offset 0, verified at 6 residues |
+| PDB `1IEP`, `2HYY` | ✅ offset 0 |
+| PDB `1OPJ` | ❌ **offset +19** |
+
+`1OPJ` carries the *same* imatinib ligand (`STI`) as `1IEP`, so substituting it
+looks harmless and silently returns the wrong residue's distance. That is the
+trap in this family, and it is why `pocket.py` validates residue identity on
+every lookup and `embed_variants.py` refuses a run whose reference disagrees.
+
+A worked example of the cost of guessing: the initial assumption here was that
+UniProt would need `+19` relative to the DMS. The sequence check proved it needs
+`0`. Had that gone unchecked, all 4,925 rows would have been scored at the wrong
+residue.
+
 
 ## The model — exactly what it is
 
