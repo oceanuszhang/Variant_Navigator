@@ -207,6 +207,83 @@ Two further facts that constrain any model built on this data:
   drug *works*. A single scalar cannot separate "kinase dead" from "drug
   evaded", and the two have opposite clinical meaning.
 
+## Implementation plan vs. what was built
+
+The plan this section traces, step by step, with every deviation named. Three
+were deliberate and one is outstanding.
+
+| Plan step | Status | Where |
+| --- | --- | --- |
+| Load the 4,925 variants | ✅ | `pipeline/dms.py` |
+| Target = `netgrowth_mean_corrected` | ✅ | `dms.RESPONSE` |
+| Construct mutants from the **518-aa** ABL1 reference | ⚠️ **changed** | P00519 is **1130 aa** — see below |
+| ESM-2 35M over reference + mutant sequences | ✅ | `scripts/embed_variants.py` |
+| Embedding at the mutated residue | ✅ | `h[i]`, never a pooled mean |
+| Feature = mutant − reference | ✅ | mean \|feature\| = 0.139 |
+| One **480-dim** vector per variant | ✅ | `X = (4925, 480)` |
+| …**on Modal** | ⚠️ **partly** | Modal path built + smoke-tested; the 4,925 run was local on MPS |
+| 80/20 split | ✅ | `scripts/train_embeddings.py` |
+| Group by `protein_start` | ✅ | asserted, 0 shared positions |
+| Fixed random seed | ✅ | `--seed`, default 0 |
+| Ridge regression head | ✅ | `RidgeCV` |
+| **XGBoost** head | ⚠️ **substituted** | sklearn `HistGradientBoostingRegressor` — see below |
+| MAE + Spearman | ✅ | both reported |
+| In-range vs `netgr_corr_rep1/2.high` | ✅ | with the interval width printed beside it |
+| % predicted in range | ✅ | 12.8% at seed 1 |
+| Predicted-vs-measured scatterplot | ✅ | `figures/predicted_vs_measured.svg` |
+| Table: measured, predicted, error, in-range | ✅ | `output/model/validation_predictions.json` |
+| Highlight **T315I** + best/worst | ✅ | needed `--seed 1`; see below |
+
+### The three deviations, and why
+
+**518-aa reference → 1130-aa P00519.** The plan's figure is wrong: UniProt
+P00519 is 1130 aa and the DMS tiles residues 242–512. Applying position 315 to a
+518-residue sequence mutates the wrong residue in **every row**. The numbering
+was verified against the real sequence at six residues before any compute ran,
+and `embed_variants.py` refuses the whole run on a mismatch.
+
+**XGBoost → sklearn HistGradientBoosting.** Equivalent algorithm, already
+installed, no new dependency. It also lost to ridge at every rung of the earlier
+ablation, so the choice of booster was not the deciding factor. Say the word and
+`pip install xgboost` takes a minute.
+
+**Modal for the production run.** `scripts/modal_esm.py` exists, is
+authenticated and is smoke-tested end to end on an A10G with a persistent
+weights Volume — but the 4,925-variant set was embedded locally on MPS, which
+finished first. Modal's real value is the **650M** model, which is impractical
+locally.
+
+### T315I needed seed 1, and the result is the best evidence in the project
+
+Seed 0 placed position 315 in the *training* half, so the demo could not show
+it. Seed 1 holds out all 19 T315 substitutions. Splitting them by measured
+phenotype:
+
+| held-out T315 substitutions | n | mean \|error\| |
+| --- | --- | --- |
+| **tolerated** (measured ≤ +0.02) | 11 | **0.011** |
+| **resistant** (measured > +0.02) | 8 | **0.070** — 6.1× worse |
+
+```
+T315S  measured=-0.00681  predicted=-0.00628  err=+0.00053   IN RANGE
+T315W  measured=-0.02951  predicted=-0.03346  err=-0.00394   IN RANGE
+...
+T315I  measured=+0.04599  predicted=-0.02844  err=-0.07443
+T315L  measured=+0.04809  predicted=-0.02245  err=-0.07054
+T315V  measured=+0.04518  predicted=-0.01802  err=-0.06320
+```
+
+Every non-resistant substitution at the gatekeeper is predicted approximately
+right; **every resistant one is catastrophically wrong.** T315I is the single
+most clinically important imatinib-resistance mutation in CML, and the model
+places it *below* the population mean.
+
+That is not noise, it is the thesis. These features answer *"is this
+substitution plausible here?"* — which they do well, because substitutions with
+negative phenotype at 315 are mostly loss of kinase function, and conservation
+predicts that. They do not answer *"does imatinib still bind?"*, which is the
+entire question at a gatekeeper residue.
+
 ## Sponsor tools — what each one actually did
 
 Recorded honestly, including the one that could not do what we hoped. Every
