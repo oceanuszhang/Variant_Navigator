@@ -1,0 +1,14 @@
+[
+  {"name": "tebuconazole", "smiles": "CC(C)(C)C(CCC1=CC=C(C=C1)Cl)(CN2C=NC=N2)O", "target": "CYP51", "class": "triazole DMI", "approval": "EU/US registered", "pubchem_cid": 86102},
+  {"name": "propiconazole", "smiles": "CCCC1COC(O1)(CN2C=NC=N2)C3=C(C=C(C=C3)Cl)Cl", "target": "CYP51", "class": "triazole DMI", "approval": "EU/US registered", "pubchem_cid": 43234},
+  {"name": "epoxiconazole", "smiles": "C1=CC=C(C(=C1)[C@@H]2[C@@](O2)(CN3C=NC=N3)C4=CC=C(C=C4)F)Cl", "target": "CYP51", "class": "triazole DMI", "approval": "EU (withdrawn 2020)", "pubchem_cid": 107710},
+  {"name": "prothioconazole", "smiles": "C1CC1(C(CC2=CC=CC=C2Cl)(CN3C(=S)N=CN3)O)Cl", "target": "CYP51", "class": "triazolinthione DMI", "approval": "EU/US registered", "pubchem_cid": 9867952},
+  {"name": "metconazole", "smiles": "CC1(CCC(C1(CN2C=NC=N2)O)CC3=CC=C(C=C3)Cl)C", "target": "CYP51", "class": "triazole DMI", "approval": "EU/US registered", "pubchem_cid": 56351},
+  {"name": "cyproconazole", "smiles": "CC(C1CC1)C(CN2C=NC=N2)(C3=CC=C(C=C3)Cl)O", "target": "CYP51", "class": "triazole DMI", "approval": "EU/US registered", "pubchem_cid": 86132},
+  {"name": "difenoconazole", "smiles": "CC1COC(O1)(CN2C=NC=N2)C3=C(C=C(C=C3)OC4=CC=C(C=C4)Cl)Cl", "target": "CYP51", "class": "triazole DMI", "approval": "EU/US registered", "pubchem_cid": 86173},
+  {"name": "triadimefon", "smiles": "CC(C)(C)C(=O)C(N1C=NC=N1)OC2=CC=C(C=C2)Cl", "target": "CYP51", "class": "1st-gen triazole DMI", "approval": "legacy (mostly withdrawn)", "pubchem_cid": 40569},
+  {"name": "prochloraz", "smiles": "CCCN(CCOC1=C(C=C(C=C1Cl)Cl)Cl)C(=O)N2C=CN=C2", "target": "CYP51", "class": "imidazole DMI", "approval": "EU registered", "pubchem_cid": 73665},
+  {"name": "azoxystrobin", "smiles": "CO/C=C(\\C1=CC=CC=C1OC2=NC=NC(=C2)OC3=CC=CC=C3C#N)/C(=O)OC", "target": "cytochrome bc1", "class": "QoI (off-target control)", "approval": "EU/US registered", "pubchem_cid": 3034285},
+  {"name": "pyraclostrobin", "smiles": "COC(=O)N(C1=CC=CC=C1COC2=NN(C=C2)C3=CC=C(C=C3)Cl)OC", "target": "cytochrome bc1", "class": "QoI (off-target control)", "approval": "EU/US registered", "pubchem_cid": 6422843},
+  {"name": "fluxapyroxad", "smiles": "CN1C=C(C(=N1)C(F)F)C(=O)NC2=CC=CC=C2C3=CC(=C(C(=C3)F)F)F", "target": "succinate dehydrogenase", "class": "SDHI (off-target control)", "approval": "EU/US registered", "pubchem_cid": 11693438}
+]

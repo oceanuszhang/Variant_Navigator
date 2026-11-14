@@ -1,0 +1,21 @@
+{
+  "id": "egfr_t790m",
+  "mode": "oncology",
+  "gene": "EGFR",
+  "uniprot": "P00533",
+  "organism": "Homo sapiens",
+  "organism_id": 9606,
+  "variant": "T790M",
+  "wt_residue_check": {"position": 790, "expected": "T"},
+  "in_annotated_binding_site": true,
+  "context": "Gatekeeper substitution in the EGFR ATP pocket; dominant acquired-resistance mechanism after 1st-gen TKI therapy in NSCLC.",
+  "panel": "oncology",
+  "expected": {
+    "erlotinib": "fail",
+    "gefitinib": "fail",
+    "osimertinib": "work",
+    "lazertinib": "work"
+  },
+  "notes": "Primary positive control. Bulkier Met790 plus raised ATP affinity blocks reversible 1st-gen binding; 3rd-gen covalent inhibitors retain activity.",
+  "source": "FLAURA / AURA3 clinical literature"
+}

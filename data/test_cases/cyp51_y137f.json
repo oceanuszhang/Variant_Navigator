@@ -1,0 +1,21 @@
+{
+  "id": "cyp51_y137f",
+  "mode": "agriculture",
+  "gene": "CYP51",
+  "uniprot": null,
+  "organism": "Zymoseptoria tritici",
+  "organism_id": 336722,
+  "variant": "Y137F",
+  "wt_residue_check": {"position": 137, "expected": "Y"},
+  "in_annotated_binding_site": null,
+  "context": "CYP51 (sterol 14-alpha-demethylase) substitution in wheat pathogens; a documented DMI-azole resistance mechanism.",
+  "panel": "fungicides",
+  "expected": {
+    "tebuconazole": "fail",
+    "triadimefon": "fail",
+    "prothioconazole": "work",
+    "azoxystrobin": "n/a"
+  },
+  "notes": "FLAG FOR REVIEW: Y137F is documented in Zymoseptoria tritici (wheat septoria) and as Y136F in Blumeria graminis (powdery mildew) - NOT in Puccinia (wheat rust). Rusts are not primarily controlled by DMI azoles. Either (a) reframe this demo as wheat septoria, which keeps the literature support, or (b) pick a genuine Puccinia target. Residue numbering and accession must be confirmed against the chosen organism before this counts as a positive control.",
+  "source": "Cools & Fraaije, CYP51 variant literature in Z. tritici"
+}
