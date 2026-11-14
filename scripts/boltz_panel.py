@@ -184,7 +184,13 @@ def main() -> int:
             )
         except (bs.BoltzUnavailable, bs.BoltzTooExpensive) as exc:
             print(f"FAILED: {exc}")
-            results[name] = {"error": str(exc), "note": note}
+            # A run that completed but failed to PARSE was still billed, so
+            # count it. Reporting $0.00 after a parse failure understates real
+            # spend, which is the one number that must never be optimistic.
+            billed = bs.recorded_cost(f"ABL1_{name}")
+            spent += billed
+            results[name] = {"error": str(exc), "note": note,
+                             "billed_usd": billed or None}
             OUT.parent.mkdir(parents=True, exist_ok=True)
             OUT.write_text(json.dumps(results, indent=2))
             continue

@@ -364,31 +364,40 @@ def _mean_plddt_per_residue(cif_path: Path, sequence: str) -> dict[int, float]:
 
 
 def _confidence(run_json: dict[str, Any]) -> tuple[float, float | None, dict]:
-    """Mean pLDDT on 0-100, its spread across samples, and the best sample."""
-    samples = (
-        run_json.get("results", {}).get("samples")
-        or run_json.get("samples")
-        or []
-    )
-    scored: list[tuple[float, dict]] = []
+    """Mean pLDDT on 0-100, its spread across samples, and the best sample.
+
+    Shape confirmed against a real completed run, NOT the docs -- the published
+    guide describes `results.samples[].confidence`, while the API actually
+    returns:
+
+        output.all_sample_results[].metrics.complex_plddt   (0-1)
+        output.best_sample.metrics
+        output.binding_metrics.binding_confidence
+
+    Parsing the documented shape found nothing and raised, which is how the
+    mismatch surfaced. Keep reading `output`.
+    """
+    out = run_json.get("output") or {}
+    samples = out.get("all_sample_results") or []
+    vals: list[float] = []
     for s in samples:
-        c = s.get("confidence", s)
-        val = c.get("complex_plddt", c.get("structure_confidence"))
+        m = s.get("metrics", s)
+        val = m.get("complex_plddt", m.get("structure_confidence"))
         if val is None:
             continue
         val = float(val)
-        scored.append(((val * PLDDT_SCALE if val <= 1.0 else val), s))
-    if not scored:
+        vals.append(val * PLDDT_SCALE if val <= 1.0 else val)
+    if not vals:
         raise BoltzUnavailable(
-            "prediction returned no per-sample confidence; cannot report pLDDT"
+            f"no per-sample confidence in output (status="
+            f"{run_json.get('status')!r}, keys={sorted(out)}); cannot report pLDDT"
         )
-    vals = [v for v, _ in scored]
     mean = sum(vals) / len(vals)
     sd = None
     if len(vals) > 1:
         var = sum((v - mean) ** 2 for v in vals) / (len(vals) - 1)
         sd = var ** 0.5
-    best = max(scored, key=lambda t: t[0])[1]
+    best = (out.get("best_sample") or {}).get("metrics", {})
     return mean, sd, best
 
 
@@ -402,6 +411,21 @@ def _cache_key(body: dict[str, Any], model: str) -> str:
         sort_keys=True,
     )
     return hashlib.sha256(blob.encode()).hexdigest()[:16]
+
+
+def recorded_cost(name: str, out_dir: Path | str = CACHE_DIR) -> float:
+    """Total billed cost recorded for `name`, across cache keys.
+
+    Reads the cost.json markers written at submission time, so a run that was
+    billed but whose result we failed to parse still shows up in the total.
+    """
+    total = 0.0
+    for marker in Path(out_dir).glob(f"{name}_*/cost.json"):
+        try:
+            total += float(json.loads(marker.read_text())["estimated_cost_usd"])
+        except (json.JSONDecodeError, KeyError, ValueError, OSError):
+            continue
+    return total
 
 
 def predict_structure(
@@ -423,11 +447,6 @@ def predict_structure(
     Set `dry_run=True` to stop after the estimate and spend nothing; the
     returned Structure then carries only `cost_usd`.
     """
-    if not available():
-        raise BoltzUnavailable(
-            "boltz-api is not authenticated; run `boltz-api auth login`"
-        )
-
     cropped = sequence if already_cropped else crop_sequence(sequence)
     body = build_input(
         cropped, compound=compound, pocket_hint=pocket_hint,
@@ -438,28 +457,41 @@ def predict_structure(
     run_dir = out_dir / f"{name}_{_cache_key(body, model)}"
     cached = run_dir / "run.json"
 
-    cap = max_usd if max_usd is not None else float(
-        os.getenv("VN_BOLTZ_MAX_USD", DEFAULT_MAX_USD)
+    # CACHE FIRST, before anything that touches the network. A finished run is
+    # already paid for and already on disk; re-reading it must not depend on a
+    # live session. The first version ran the cost preflight unconditionally,
+    # so when the OAuth token expired it could no longer read results it had
+    # already bought.
+    have_result = cached.exists() and (
+        json.loads(cached.read_text()).get("status") == "succeeded"
     )
 
-    # Preflight runs even on a cache hit -- it is free, and it keeps the
-    # reported cost honest if the cached run was made under a different price.
-    est = estimate_cost(body, model=model)
-    cost = float(est["estimated_cost_usd"])
-    if cost > cap:
-        raise BoltzTooExpensive(
-            f"estimate ${cost:.4f} exceeds the ${cap:.2f} cap for {name}. "
-            f"Raise max_usd / VN_BOLTZ_MAX_USD deliberately, or shrink the "
-            f"request ({est.get('breakdown')})."
+    cost: float | None = None
+    if not have_result:
+        if not available():
+            raise BoltzUnavailable(
+                "boltz-api is not authenticated; run `boltz-api auth login`"
+            )
+        cap = max_usd if max_usd is not None else float(
+            os.getenv("VN_BOLTZ_MAX_USD", DEFAULT_MAX_USD)
         )
-    if dry_run:
-        return Structure(
-            path=run_dir, sequence=cropped, confidence=0.0,
-            pocket_residues=list(pocket_hint or []), num_samples=num_samples,
-            crop=(CROP_START, CROP_END), cost_usd=cost, source="boltz-estimate",
-        )
+        est = estimate_cost(body, model=model)
+        cost = float(est["estimated_cost_usd"])
+        if cost > cap:
+            raise BoltzTooExpensive(
+                f"estimate ${cost:.4f} exceeds the ${cap:.2f} cap for {name}. "
+                f"Raise max_usd / VN_BOLTZ_MAX_USD deliberately, or shrink the "
+                f"request ({est.get('breakdown')})."
+            )
+        if dry_run:
+            return Structure(
+                path=run_dir, sequence=cropped, confidence=0.0,
+                pocket_residues=list(pocket_hint or []),
+                num_samples=num_samples, crop=(CROP_START, CROP_END),
+                cost_usd=cost, source="boltz-estimate",
+            )
 
-    if not cached.exists():
+    if not have_result:
         run_dir.parent.mkdir(parents=True, exist_ok=True)
         # @json:// keeps a 271-aa sequence plus SMILES off the argv length limit.
         payload = run_dir.parent / f".{run_dir.name}.input.json"
@@ -480,18 +512,31 @@ def predict_structure(
                 f"boltz run failed for {name}: "
                 f"{(proc.stderr or proc.stdout).strip()[-400:]}"
             )
+        # Record the spend the moment the run returns, BEFORE parsing. The
+        # first version only counted cost on a successful parse, so when the
+        # parser rejected two completed runs it reported "$0.00 spent" while
+        # $0.20 had in fact been billed. Money spent is not contingent on our
+        # ability to read the result.
+        (run_dir / "cost.json").write_text(json.dumps(
+            {"estimated_cost_usd": cost, "model": model,
+             "num_samples": num_samples, "crop": [CROP_START, CROP_END]}
+        ))
 
     if not cached.exists():
         raise BoltzUnavailable(f"run completed but {cached} is missing")
     run_json = json.loads(cached.read_text())
+    if cost is None:   # cache hit: report what was actually billed, if known
+        cost = recorded_cost(name, out_dir) or None
 
-    mean, sd, best = _confidence(run_json)
-    files = sorted((run_dir / "outputs" / "files").glob("*.cif"))
+    mean, sd, conf = _confidence(run_json)
+    # The best sample is written under the prediction id; samples 1-4 use
+    # sample_N_predicted_structure.cif. Prefer the best one.
+    cif_dir = run_dir / "outputs" / "files" / "prediction"
+    files = (sorted(cif_dir.glob("*_predicted.cif"))
+             or sorted(cif_dir.glob("sample_*_predicted_structure.cif")))
     per_residue = _mean_plddt_per_residue(files[0], cropped) if files else {}
-    binding = (best.get("binding_metrics") or run_json.get("binding_metrics")
-               or {})
+    binding = (run_json.get("output") or {}).get("binding_metrics") or {}
 
-    conf = best.get("confidence", best)
     return Structure(
         path=files[0] if files else run_dir,
         sequence=cropped,
