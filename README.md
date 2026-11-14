@@ -215,10 +215,10 @@ claim below was verified by running it, not by reading a landing page.
 | Tool | Used for | Outcome |
 | --- | --- | --- |
 | **Talus Bio Ptarmigan-1** | Compound→target engagement screen | ✅ Ran 2 screens, $0.06. **Cannot score mutants** — see below |
-| **Modal** | ESM-2 on A10G GPU, persistent weights Volume | ✅ Smoke-tested end to end; makes the 650M model practical |
+| **Modal** | ESM-2 on A10G GPU, persistent weights Volume | ✅ Authenticated (`oceanus315`), smoke-tested end to end |
 | **ESM-2** (`fair-esm`) | Variant scoring, two different ways | ✅ The single most valuable feature block (r 0.245 → 0.3315) |
 | **Paperclip** | Literature evidence, isolated from prediction | ✅ Returns live PMC citations — was silently broken, fixed |
-| **Boltz** | Mutant structure prediction (stage 4) | ⏳ CLI v0.44.0 installed, oauth authenticated, not yet called |
+| **Boltz** | Mutant structure prediction (stage 4) | ⏳ CLI v0.44.0, **oauth authenticated**, not yet called — estimate cost first |
 | **Keenable** | Web search / page fetch for agents | ⏳ MCP server ✔ Connected; tools need a Claude Code restart |
 | **Genomic Intelligence** | Ground-truth cross-referencing | ⏳ `.env` placeholder added, awaiting key |
 
@@ -280,8 +280,50 @@ see "Environment gotchas".
 | Feature | `log P(alt) − log P(ref)` at masked *i* | `h_mut[i] − h_ref[i]` |
 | Dimensions | 5 | 480 (35M) / 1280 (650M) |
 | Forward passes | **271** (one per position) | **4,926** (one per variant) |
-| Wired into `main.py` | ✅ yes | research script |
+| Best result | **r = 0.3315** (combined) | Spearman **0.195** |
+| Wired into `main.py` | ✅ **yes** | ❌ no — it lost |
 | Script | `pipeline/esm2_score.py` | `scripts/embed_variants.py` |
+
+### The embedding approach lost, and the reason is mechanistic
+
+Worth recording so nobody repeats it. 4,925 variants embedded, 480-dim
+differences, 80/20 position-grouped split (3,928 train / 997 test, 216 / 54
+positions, zero shared):
+
+| head | MAE | Spearman | Pearson | in-range |
+| --- | --- | --- | --- | --- |
+| ridge | 0.01968 | 0.1178 | 0.1033 | 10.5% |
+| hist_gbm | **0.01913** | **0.1947** | 0.1714 | 11.0% |
+| predict-the-mean | 0.01938 | 0.0000 | 0.0000 | — |
+
+**480 dimensions and 4,926 forward passes barely beat predicting the training
+mean** (MAE 0.01913 vs 0.01938), and lost clearly to the 5-feature masked
+marginal. More capacity did not help: 480 features against 3,928 rows overfits,
+and local embedding context does not carry the evolutionary-likelihood signal
+the masked marginal reads directly.
+
+The failure is not numerical. **Every one of the five worst predictions is a
+P-loop resistance mutation:**
+
+```
+G250S  measured=+0.04027  predicted=-0.02991
+G250A  measured=+0.03884  predicted=-0.02843
+L248C  measured=+0.04221  predicted=-0.02427
+G250E  measured=+0.04276  predicted=-0.02311
+L273N  measured=+0.04174  predicted=-0.02353
+```
+
+The model places **the most resistant variants at the population mean.**
+Embeddings describe what a substitution did to the local sequence; they do not
+know that imatinib stopped binding. The best predictions, by contrast, are
+unremarkable substitutions already near the mean — where being approximately
+right is easy.
+
+In-range sits at 10–11% against a replicate interval of mean width 0.00689
+while the response spans ~0.12. That is the honest reading of the metric: the
+model is nowhere near the precision of repeating the experiment.
+
+![predicted vs measured](figures/predicted_vs_measured.svg)
 
 Both read **one residue**, never a pooled mean. That is the whole trick: all
 4,925 variants are the same protein at 99.82% sequence identity, so a
@@ -466,10 +508,16 @@ pipeline/
 ├── drug_screen.py  # Ptarmigan-1; key present, awaiting API docs     [stub]
 └── agent_report.py # report writer; Keenable agent to be wired       [partial]
 scripts/
-├── make_figures.py    # regenerates figures/ from live pocket geometry
-└── train_baseline.py  # the ablation ladder under position-grouped CV
+├── make_figures.py       # regenerates figures/ from live pocket geometry
+├── train_baseline.py     # the ablation ladder under position-grouped CV
+├── embed_variants.py     # mutant-marginal embeddings, local on MPS
+├── modal_esm.py          # the same, on a Modal A10G (for the 650M model)
+├── train_embeddings.py   # ridge + GBM heads on the embeddings
+└── plot_predictions.py   # predicted-vs-measured scatter
 figures/            # SVG, written straight from the code that computes them
-data/esm/           # cached masked marginals, keyed by model AND crop
+data/esm/           # cached marginals + embeddings, keyed by model AND crop
+output/ptarmigan/   # the two wild-type control screens, as returned
+output/model/       # per-variant validation predictions
 ```
 
 ### Figures
@@ -482,6 +530,7 @@ Regenerate with `python scripts/make_figures.py`. Each is written directly from
 | [`pocket_distances.svg`](figures/pocket_distances.svg) | variant-site→inhibitor distance, with the 5 Å contact threshold |
 | [`prediction_matrix.svg`](figures/prediction_matrix.svg) | the output object: variant × compound, and how to read it |
 | [`numbering_systems.svg`](figures/numbering_systems.svg) | one residue across every numbering convention |
+| [`predicted_vs_measured.svg`](figures/predicted_vs_measured.svg) | held-out predictions, with the replicate agreement band drawn |
 
 ### Environment gotchas
 
@@ -516,15 +565,18 @@ Note what is *absent* from that list: **no Modal, no GPU rental, no inference
 API**. ESM2 runs on the laptop. The only remaining credentialed dependency on
 the prediction path is Ptarmigan-1, which is optional.
 
-### Planned (interfaces fixed, awaiting credentials or wiring)
+### Planned (interfaces fixed, awaiting wiring)
 
-| Tool | Step | Function | Key needed |
+| Tool | Step | Function | Still needs |
 | --- | --- | --- | --- |
-| **ESM2 (650M)** | 2 | Evolutionary tolerance / functional impact score | via Modal |
-| **Modal** | 2, 3 | GPU compute backend for ESM2 + Boltz | `MODAL_TOKEN_ID`, `MODAL_TOKEN_SECRET` |
-| **Boltz** | 3 | Mutant structure prediction + pocket RMSD | via Modal |
-| **Ptarmigan-1** (Talus Bio) | 4 | Drug–mutant binding affinity screening | `PTARMIGAN_API_KEY` **+ docs** |
-| **Keenable** | 5 | Agent orchestration + report generation | `KEENABLE_API_KEY` **+ docs** |
+| **Boltz** | 4 | Mutant structure prediction + pocket RMSD | Nothing — CLI authenticated; estimate cost, then call |
+| **Keenable** | 5 | Web search / page fetch for the evidence track | A Claude Code restart so the MCP tools load |
+| **Genomic Intelligence** | 5 | Ground-truth cross-referencing | A key in `.env` |
+| **Nebius** | 7 | Rewrites the report prose | Optional — the deterministic renderer already works |
+
+ESM2 and Modal have moved to the working table above: ESM2 runs locally on MPS
+and Modal is authenticated with a GPU path. Ptarmigan-1 is **not** listed as
+planned, because the limitation is structural rather than pending — see above.
 
 ### Ground-truth references (Step 5 cross-referencing)
 
@@ -626,9 +678,21 @@ until then, treat output as a pipeline demo, not a prediction.
 
 ## Blocked / needs you
 
-- **Ptarmigan-1 and Keenable API keys + docs.** No DNAForge repo is reachable from this account, and neither API has public docs, so both calls are stubs with a fixed interface. Drop the keys in `.env` (gitignored) and send the docs. **These two are the critical path** — Steps 4 and 5 cannot run without them.
-- **OncoKB API token**, if you want Step 5 to cross-reference sensitivity calls programmatically rather than by hand.
-- **"Paperclip"** — not in the plan doc and nothing by that name turns up in protein/drug-binding tooling. Send a link or say what it does and I will slot it in; see the note below.
+- **Nothing is blocked on a missing key any more.** The one-time blockers are
+  resolved: the measured-data transcription (replaced by a public MIT dataset),
+  the Ptarmigan docs (found at `ptarmigan.app/llms.txt`), Paperclip (it was an
+  installed CLI, broken only by interpreter discovery), and ESM2 (needed
+  `torch`, not credentials).
+- **Ptarmigan-1 is structurally limited, not pending.** It screens only
+  wild-type catalog proteins, so `drug_screen.py`'s mutant-minus-wildtype delta
+  cannot be built on it at any price. Either reframe stage 6 as a wild-type
+  control, or drop it.
+- **The $2,500 DNAForge Ptarmigan grant expires 2026-11-15 08:00 UTC.** Unspent
+  credit evaporates; a bigger wild-type screen is the only way to use it.
+- **A Claude Code restart**, so the Keenable MCP tools load.
+- **Genomic Intelligence key**, if you want that cross-referencing channel.
+- **Rotate the Ptarmigan key.** It was pasted into the committed
+  `.env.example` once. Caught before any commit, but treat it as disclosed.
 - **Repo name.** This is `Variant_Navigator`, not `variant-navigator` — kept as-is to avoid breaking your clone; say the word if you want it renamed.
 
 ## Scope note
