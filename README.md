@@ -45,6 +45,92 @@ that are not wired up yet are **skipped with a note** rather than crashing, so
 | `drug_screen.py` | Stub — panel loading + ranking real, Ptarmigan-1 call pending docs |
 | `agent_report.py` | Partial — deterministic markdown renderer works, Keenable call pending docs |
 
+## Data sources and structure
+
+Every accession, CID and offset below was verified live against the source API,
+not copied from the plan doc.
+
+### Targets (`data/targets.json`)
+
+| | Experiment 1 | Experiment 2 |
+| --- | --- | --- |
+| Target | Human EGFR | Rice ALS1 |
+| UniProt | `P00533` (1210 aa) | `Q6K2E8` (644 aa) |
+| Organism | *Homo sapiens* | *Oryza sativa*, weedy accessions |
+| Pocket structures | PDB `1M17`, `4ZAU` | PDB `1Z8N`, `1YHZ` (*Arabidopsis*) |
+| Assay | Ba/F3 cell viability IC₅₀ | fresh shoot biomass GR₅₀, 21 d |
+| Reference | wild-type EGFR | IRGA417 susceptible cultivar |
+| Compounds | erlotinib, osimertinib | imazethapyr, nicosulfuron |
+| Numbering offset | 0 | **−26** |
+
+### ⚠ The ALS numbering offset will silently corrupt Experiment 2
+
+The ALS resistance literature numbers variants in **Arabidopsis** convention
+(A122, W574, S653). Rice ALS1 is 26 residues shorter. Checked against the real
+sequences:
+
+| Published | *Arabidopsis* `P17597` | Rice `Q6K2E8` | Rice, renumbered −26 |
+| --- | --- | --- | --- |
+| A122 | A ✓ | **A ✓ (coincidence)** | A96 ✓ |
+| W574 | W ✓ | D ✗ | W548 ✓ |
+| S653 | S ✓ | past 644-aa end ✗ | S627 ✓ |
+
+**A122 is alanine in both numbering systems by accident.** A122T is the headline
+live demo case, so it would validate fine while every other site was quietly
+wrong — the worst kind of bug, because the demo passes. W548L and S627I are the
+documented rice ALS resistance substitutions, which is the independent check
+that −26 is right.
+
+`mutant.apply_variant(..., offset=-26)` handles this, and
+`strict=True` refuses rather than guessing when a residue disagrees. Genotypes
+stay in published numbering in the CSVs so transcription remains checkable
+against the paper; renumbering happens in code.
+
+### Compounds (`data/compounds/compounds.json`)
+
+SMILES resolved from **PubChem PUG REST** (no key, no licence friction):
+erlotinib `CID 176870`, osimertinib `CID 71496458`, imazethapyr `CID 54740`,
+nicosulfuron `CID 73281`.
+
+### Measured response data (`data/datasets/`) — **the critical blocker**
+
+The regression target is log₂(dose ratio vs. reference). Neither dataset is
+API-fetchable; both must be transcribed from published figures and tables:
+
+- `egfr_ic50.csv` — EGFR Ba/F3 screen, **Figure 2 source data**
+- `rice_gr50.csv` — weedy rice ALS study, **Figure 4 + Supplementary Table S1**
+
+`data/datasets/SCHEMA.md` specifies the exact columns, including `censored` and
+`bound` for rows where 50% inhibition was never reached. Those rows keep their
+bound and are **excluded from exact-error metrics**: dropping them biases error
+down, recording them as numbers biases it up.
+
+**Nothing downstream of feature extraction can run until these two files exist.**
+No API key unblocks this — it needs the PDFs or the authors' source data. Send
+the DOIs or the files and this moves to the top of my queue.
+
+### Repo structure
+
+```
+data/
+├── targets.json              # accessions, PDB refs, numbering offsets, assays
+├── compounds/compounds.json  # SMILES + PubChem CIDs, tagged by experiment
+├── datasets/
+│   ├── SCHEMA.md             # required CSV columns (written)
+│   ├── egfr_ic50.csv         # NEEDED - transcribe from Figure 2 source data
+│   └── rice_gr50.csv         # NEEDED - transcribe from Figure 4 + Table S1
+├── drug_panels/              # from the earlier classification design (see note)
+└── test_cases/               # positive controls (see note)
+pipeline/
+├── fetch.py        # UniProt -> sequence + binding-site residues     [working]
+├── mutant.py       # variant notation -> mutant seq, with renumber() [working]
+├── evidence.py     # Paperclip retrieval, isolated from prediction   [working]
+├── esm2_score.py   # ESM-2 35M via Modal                             [stub]
+├── boltz_structure.py # Boltz-2 via Tamarind Bio                     [stub]
+├── drug_screen.py  # was Ptarmigan-1 classifier; now optional        [stub]
+└── agent_report.py # report writer; Nebius agent to be wired         [partial]
+```
+
 ## Tools
 
 ### In use now (working, committed)

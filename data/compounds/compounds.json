@@ -1,0 +1,6 @@
+[
+  {"name": "erlotinib", "experiment": 1, "smiles": "COCCOC1=C(C=C2C(=C1)C(=NC=N2)NC3=CC=CC(=C3)C#C)OCCOC", "target": "EGFR", "class": "1st-gen reversible TKI", "pubchem_cid": 176870},
+  {"name": "osimertinib", "experiment": 1, "smiles": "CN1C=C(C2=CC=CC=C21)C3=NC(=NC=C3)NC4=C(C=C(C(=C4)NC(=O)C=C)N(C)CCN(C)C)OC", "target": "EGFR", "class": "3rd-gen covalent TKI", "pubchem_cid": 71496458},
+  {"name": "imazethapyr", "experiment": 2, "smiles": "CCC1=CC(=C(N=C1)C2=NC(C(=O)N2)(C)C(C)C)C(=O)O", "target": "ALS", "class": "imidazolinone", "pubchem_cid": 54740},
+  {"name": "nicosulfuron", "experiment": 2, "smiles": "CN(C)C(=O)C1=C(N=CC=C1)S(=O)(=O)NC(=O)NC2=NC(=CC(=N2)OC)OC", "target": "ALS", "class": "sulfonylurea", "pubchem_cid": 73281}
+]

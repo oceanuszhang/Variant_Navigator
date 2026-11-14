@@ -1,0 +1,43 @@
+{
+  "egfr": {
+    "experiment": 1,
+    "organism": "Homo sapiens",
+    "uniprot": "P00533",
+    "length": 1210,
+    "numbering": "UniProt P00533 == clinical EGFR numbering",
+    "numbering_offset": 0,
+    "pdb_reference": [
+      "1M17",
+      "4ZAU"
+    ],
+    "pdb_note": "1M17 = EGFR kinase + erlotinib; 4ZAU = EGFR T790M + osimertinib. Pocket geometry source.",
+    "assay": "Ba/F3 cell viability IC50",
+    "reference_genotype": "wild-type EGFR",
+    "compounds": [
+      "erlotinib",
+      "osimertinib"
+    ]
+  },
+  "rice_als": {
+    "experiment": 2,
+    "organism": "Oryza sativa (weedy rice accessions)",
+    "uniprot": "Q6K2E8",
+    "uniprot_gene": "ALS1",
+    "length": 644,
+    "numbering": "ALS resistance literature uses ARABIDOPSIS numbering (A122, W574, S653). Rice Q6K2E8 is 26 residues shorter.",
+    "numbering_offset": -26,
+    "numbering_warning": "A122 is alanine in BOTH numbering systems by coincidence, so testing only A122T hides the bug. W574 is Asp in rice numbering and S653 is past the 644-residue end. Always renumber.",
+    "arabidopsis_reference": "P17597",
+    "pdb_reference": [
+      "1Z8N",
+      "1YHZ"
+    ],
+    "pdb_note": "Arabidopsis ALS structures. Rice ALS must be aligned to these; they contain related but not identical inhibitors, so pocket distances are APPROXIMATE and must be recorded as such.",
+    "assay": "fresh shoot biomass GR50, 21 days post-treatment",
+    "reference_genotype": "IRGA417 (susceptible cultivar)",
+    "compounds": [
+      "imazethapyr",
+      "nicosulfuron"
+    ]
+  }
+}
