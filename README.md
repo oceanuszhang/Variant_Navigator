@@ -59,7 +59,7 @@ python main.py --gene P00519 --variant G250L --mode oncology       # one variant
 | `esm2_score.py` | **Working** — ESM2 masked marginals, local on MPS, cached |
 | `features.py` | **Working** — substitution / position / ESM blocks, ablatable |
 | `predict.py` | **Working** — measurement when known, model otherwise |
-| `boltz_structure.py` | Stub — **boltz-api CLI v0.44.0 authenticated**; needs wiring, not credentials |
+| `boltz_structure.py` | **Working** — Boltz-2.1 structure + binding via the `boltz-api` CLI, kinase crop 242–512, 5 samples, free cost preflight on every call |
 | `drug_screen.py` | Stub — **cannot be built as designed**: Ptarmigan screens wild-type only |
 | `agent_report.py` | **Working** — deterministic renderer produces a complete report; the agent rewrite (Nebius) is optional |
 
@@ -319,20 +319,83 @@ negative phenotype at 315 are mostly loss of kinase function, and conservation
 predicts that. They do not answer *"does imatinib still bind?"*, which is the
 entire question at a gatekeeper residue.
 
-## Sponsor tools — what each one actually did
+## Sponsor tools — status at a glance
 
-Recorded honestly, including the one that could not do what we hoped. Every
-claim below was verified by running it, not by reading a landing page.
+Every row was verified by **running** the tool, not by reading its landing page.
+Where a tool could not do what we wanted, that is recorded as the finding.
 
-| Tool | Used for | Outcome |
+| Sponsor tool | Status | What it did here | Evidence in repo |
+| --- | --- | --- | --- |
+| **Talus Bio Ptarmigan-1** | ✅ **used** | 2 compound→target screens, $0.06. **Cannot score mutants** — the finding | `output/ptarmigan/*.json` |
+| **Modal** | ✅ **used** | Full 4,925-variant ESM-2 run on an A10G, weights in a persistent Volume | `scripts/modal_esm.py` |
+| **Boltz** | ✅ **used** | Structure + binding, cost-estimated before every call, capped at `VN_BOLTZ_MAX_USD` | `pipeline/boltz_structure.py`, `scripts/boltz_panel.py` |
+| **Keenable** | ⏳ connected | MCP server ✔ Connected and key accepted; **tools need a Claude Code restart to load** | `~/.claude.json`, `CLAUDE.md` rule |
+| **Genomic Intelligence** | ⏳ awaiting key | `.env` placeholder wired | `.env.example` |
+| **Raycaster** | ❌ not used | No integration identified | — |
+| **Biobase** | ❌ not used | Prize is for contributed evaluation questions, not a tool call | — |
+
+Non-sponsor tools that carry real weight, for completeness:
+
+| Tool | Status | What it did |
 | --- | --- | --- |
-| **Talus Bio Ptarmigan-1** | Compound→target engagement screen | ✅ Ran 2 screens, $0.06. **Cannot score mutants** — see below |
-| **Modal** | ESM-2 on A10G GPU, persistent weights Volume | ✅ Authenticated (`oceanus315`), smoke-tested end to end |
-| **ESM-2** (`fair-esm`) | Variant scoring, two different ways | ✅ The single most valuable feature block (r 0.245 → 0.3315) |
-| **Paperclip** | Literature evidence, isolated from prediction | ✅ Returns live PMC citations — was silently broken, fixed |
-| **Boltz** | Mutant structure prediction (stage 4) | ⏳ CLI v0.44.0, **oauth authenticated**, not yet called — estimate cost first |
-| **Keenable** | Web search / page fetch for agents | ⏳ MCP server ✔ Connected; tools need a Claude Code restart |
-| **Genomic Intelligence** | Ground-truth cross-referencing | ⏳ `.env` placeholder added, awaiting key |
+| **ESM-2** (`fair-esm`) | ✅ | The single most valuable feature block — r 0.245 → **0.3315** |
+| **Paperclip** | ✅ | Live PMC citations; was silently broken and fixed (`/opt` interpreter discovery) |
+| **UniProt / PubChem / RCSB PDB** | ✅ | Sequences, SMILES, biological assemblies — all keyless |
+| **scikit-learn** | ✅ | Ridge / HistGBM / RandomForest + the CV harness |
+
+### Where the sponsor credit actually went
+
+| | |
+| --- | --- |
+| Ptarmigan-1 | **$0.06** of $2,750 — the $2,500 DNAForge grant expires **2026-11-15 08:00 UTC** |
+| Modal | One full 4,925-variant A10G run + smoke tests |
+| Boltz | Estimated, not yet spent beyond the panel; `estimate-cost` is free |
+
+### Boltz costs — measured, not guessed
+
+`estimate-cost` is free, so it runs before every submission and
+`boltz_structure.predict_structure()` refuses to exceed `VN_BOLTZ_MAX_USD`
+(default $0.25/call). Measured 2026-11-14 against `boltz-2.1`:
+
+| request | cost |
+| --- | --- |
+| full-length P00519 (1130 aa) + imatinib, 1 sample | $0.20 |
+| kinase crop 242–512 (271 aa) + imatinib, 1 sample | $0.05 |
+| kinase crop, **5 samples** | **$0.10** |
+| kinase crop, 10 samples | $0.20 |
+
+Three counter-intuitive findings, each of which changes the right design:
+
+- **Binding metrics are free.** Structure-only and structure+affinity cost the
+  same, so always request `binding`.
+- **5 samples cost the same as 3**, hitting the per-unit floor. Use 5 and report
+  the spread; 1 sample gives no spread to report.
+- **There is a $0.05 floor**, so the published "0–256 aa → $0.025" tier is
+  unreachable and there is **no cost reason to shave the crop**. Shaving it is
+  what breaks coverage: the DMS spans 242–512 while 1IEP resolves only 225–498,
+  so cropping to the structure would silently drop 14 measured positions to save
+  nothing.
+
+`admin:usage` returns 401 under the OAuth session, so the CLI cannot show a
+Boltz balance — budget from estimates, not a balance.
+
+### Why Boltz can do what Ptarmigan could not
+
+Ptarmigan screens wild-type catalog proteins only, so a mutant-minus-wildtype
+delta is impossible there. Boltz has no such limit: it predicts the mutant
+complex *and* the wild-type complex, so the delta is recoverable. That is the
+whole point of `scripts/boltz_panel.py`, which runs wild-type first and reports
+every mutant as a delta against it.
+
+The 20-variant panel is chosen so the result can be scored rather than admired:
+every variant is **measured** in the DMS, and the panel spans the full measured
+range (−0.062 to +0.049) with 14 resistant, 3 near-neutral and 3 kinase-dead —
+a panel of resistance mutations alone would sit at one extreme and look good for
+the wrong reason. It deliberately includes all five variants the embeddings got
+**worst** (G250S, G250A, G250E, L248C, L273N), measured near +0.04 and predicted
+near the population mean. Whether pocket geometry recovers them is the most
+informative result this panel can produce.
+
 
 ### Ptarmigan-1 cannot score mutants, and that is structural
 
@@ -630,7 +693,7 @@ pipeline/
 ├── esm2_score.py   # ESM2 masked marginals, local on MPS, cached     [working]
 ├── predict.py      # measurement if known, trained model otherwise   [working]
 ├── evidence.py     # Paperclip retrieval, isolated from prediction   [working]
-├── boltz_structure.py # Boltz-2 via Tamarind Bio                     [stub]
+├── boltz_structure.py # Boltz-2.1 structure + binding via boltz-api CLI
 ├── drug_screen.py  # Ptarmigan-1; key present, awaiting API docs     [stub]
 └── agent_report.py # report writer; Keenable agent to be wired       [partial]
 scripts/
@@ -695,7 +758,7 @@ the prediction path is Ptarmigan-1, which is optional.
 
 | Tool | Step | Function | Still needs |
 | --- | --- | --- | --- |
-| **Boltz** | 4 | Mutant structure prediction + pocket RMSD | Nothing — CLI authenticated; estimate cost, then call |
+| **Boltz** | 4 | Mutant structure prediction + binding metrics | Nothing — oauth session in the system keyring |
 | **Keenable** | 5 | Web search / page fetch for the evidence track | A Claude Code restart so the MCP tools load |
 | **Genomic Intelligence** | 5 | Ground-truth cross-referencing | A key in `.env` |
 | **Nebius** | 7 | Rewrites the report prose | Optional — the deterministic renderer already works |

@@ -37,6 +37,37 @@ ESM2.
   fixed. T790M resistance is in thousands of papers, so a pipeline allowed to
   read them is looking up the answer, not deriving it.
 
+## Boltz costs — measured, not guessed
+
+`estimate-cost` is free (no resource, no GPU). Run it before every submission;
+`boltz_structure.predict_structure()` does this for you and refuses to exceed
+`VN_BOLTZ_MAX_USD` (default $0.25/call).
+
+Measured 2026-11-14 with `estimate-cost`, model `boltz-2.1`:
+
+| request | cost |
+| --- | --- |
+| full-length P00519 (1130 aa) + imatinib, 1 sample | $0.20 |
+| kinase crop 242–512 (271 aa) + imatinib, 1 sample | $0.05 |
+| kinase crop, **5 samples** | **$0.10** |
+| kinase crop, 3 samples | $0.10 |
+| kinase crop, 10 samples | $0.20 |
+
+Three counter-intuitive findings, all of which change the right design:
+
+- **Binding metrics are free.** Structure-only and structure+affinity cost the
+  same, so always request `binding`.
+- **5 samples cost the same as 3** and hit the per-unit floor ($0.020). Use 5
+  and report the spread; 1 sample gives no spread to report.
+- **There is a $0.05 floor.** The published "0–256 aa → $0.025" tier is
+  unreachable — a 200-aa crop still bills $0.05. So there is **no cost reason
+  to shave the crop**, and shaving it is what breaks position coverage: the DMS
+  data spans 242–512 while 1IEP only resolves 225–498, so cropping to the
+  structure would silently drop 14 measured positions to save nothing.
+
+`admin:usage` returns 401 under the OAuth session (it wants an admin API key),
+so the CLI cannot show a Boltz balance. Budget from the estimates, not a balance.
+
 ## Secrets
 
 Real keys go in `.env`, which is gitignored. **Never** in `.env.example`, which
