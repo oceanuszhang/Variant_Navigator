@@ -5,6 +5,127 @@ The supported targets are human **ABL1/BCR-ABL** and **EGFR**. Quantitative
 measured response and runtime modeling cover **ABL1 + imatinib only**.
 This is a research prototype, not a treatment recommender.
 
+## Who this is for
+
+VariantNavigator is for **cancer researchers investigating a protein variant**.
+Use it to ask: "What experimental and computational evidence exists for this
+variant under drug, where do the methods disagree, and what should we test?"
+Its current role is evidence review and experiment prioritization. It does not
+select a treatment, establish clinical resistance, or recommend a dose.
+
+The published interface is a **Python command-line workflow that writes reports**.
+There is no hosted application. Browser UI work is separate from this backend
+release. The main supported demo is **human ABL1 + imatinib at 1,200 nM**;
+EGFR has variant/structure support but no equivalent trained response model.
+
+## User workflow
+
+1. **Enter a target and mutation.** Start with `ABL1 T315I`, using ABL1a
+   numbering. Quantitative response covers single substitutions at positions
+   242-512, with imatinib and the assay concentration fixed.
+2. **Check the experimental result first.** If the variant is in the bundled
+   4,925-variant dataset, its measured corrected net growth is returned. It is
+   a measurement lookup, not a prediction.
+3. **Inspect model estimates separately.** A saved held-out estimate is attached
+   when available. An explicit saved-model inference request identifies whether
+   its position was in training, in testing, or unseen. Training-position
+   predictions must not be presented as held-out validation.
+4. **Review structural evidence when available.** Cached benchmark variants can
+   show Boltz binding confidence, differences from wild type, and geometric
+   descriptors. New Boltz jobs require explicit opt-in and a cost preflight.
+5. **Read and share the report.** Markdown is for reading; JSON preserves the
+   structured values, provenance, and skipped-stage reasons. Literature citations
+   are a planned addition and are not automatically included yet.
+
+## Quickstart: a real report without keys or GPU
+
+Run these commands from the repository root in PowerShell. The core demo needs
+Python 3.11+ only; no package installation, credentials, network, or paid job is
+required. If you already have a `.venv`, use its Python instead of recreating it.
+
+```powershell
+# For a new checkout only:
+git clone https://github.com/oceanuszhang/Variant_Navigator.git
+cd Variant_Navigator
+
+# Generate the first report:
+python main.py --gene ABL1 --variant T315I --offline --no-agent
+
+# Compare the distant activation-loop example:
+python main.py --gene ABL1 --variant H396P --offline --no-agent
+
+# Find the generated Markdown and JSON files:
+Get-ChildItem output/reports | Sort-Object LastWriteTime -Descending
+```
+
+The CLI prints the exact report path, for example
+`output/reports/abl1_t315i_<timestamp>.md`, with a matching `.json` file.
+Open the Markdown in your editor. File timestamps and skipped-stage details
+vary, but the bundled measured values are fixed.
+
+### Example result: ABL1 T315I
+
+The default offline report contains the following values (rounded):
+
+```text
+Target: ABL1 / P00519
+Variant: T315I
+Assay: Ba/F3 corrected net growth under 1,200 nM imatinib
+Measured net growth: +0.04599
+Replicate spread: 0.00174
+Saved held-out estimate: -0.02754
+Saved model: esm2_t12_35M_UR50D / hist_gbm, seed 1
+```
+
+The **measured value and the estimate disagree**. This is an example of a
+model failure, not evidence that the assay value should be replaced. The
+negative estimate above comes from the legacy artifact bundled in Git. The
+newer locally generated persisted model estimates **-0.02466** for T315I and
+also misses its high-growth phenotype. These are two different runs; their
+predictions and validation metrics must not be mixed.
+
+Offline mode deliberately skips new sequence-model inference, experimental
+structure retrieval, and paid Boltz calls. A `partial` status and skipped-stage
+list are expected. Cached benchmark comparisons are included only if their
+locally generated artifacts are present and their provenance checks pass.
+
+### Example results: measured response and Boltz contrasts
+
+These are results from completed runs, not synthetic UI fixtures:
+
+| Variant | Measured net growth | Boltz binding confidence | What the example demonstrates |
+| --- | --- | --- | --- |
+| T315I | +0.04599 | 0.30562 | ESM misses the response; Boltz scores below T315A |
+| T315A | +0.00264 | 0.47980 | Near-neutral assay comparator at the same position |
+| H396P | +0.04877 | 0.58440 | High measured growth despite higher Boltz confidence; an allosteric failure case |
+
+Boltz supports **one of two selected directional comparisons**, not a general
+accuracy percentage. The latest ESM model has MAE **0.01926** and Spearman
+**0.2681** on 992 position-held-out variants: useful signal, modest performance.
+Higher net growth under this assay can indicate drug escape, but growth also
+depends on protein function. Binding confidence is not affinity or clinical
+response, and replicate spread is not a confidence interval.
+
+See [full model validation](#latest-full-model-run) and the
+[Boltz benchmark](#completed-four-complex-boltz-contrast-benchmark) for the
+complete results, baseline comparisons, and limitations.
+
+## Choose a demo mode
+
+| Mode | Command or section | Requirements and behavior |
+| --- | --- | --- |
+| Offline assay report | `python main.py --gene ABL1 --variant T315I --offline --no-agent` | Works from a fresh clone; bundled measurement and legacy held-out estimate; no paid calls |
+| Saved ESM model estimate | `python main.py --gene ABL1 --variant T315I --esm-run-dir output/model/abl1-study518-seed1 --no-agent` | Requires the generated model directory, compatible local packages, Modal authentication, and network; submits one GPU embedding |
+| New Boltz complex | `python main.py --gene ABL1 --variant T315I --boltz --no-agent` | Requires Boltz CLI/OAuth and network; estimates cost and applies the per-call cap before submission |
+| Reproduce four-complex benchmark | [Benchmark commands](#completed-four-complex-boltz-contrast-benchmark) | Estimate first; the verified total was $0.40; explicit submission required |
+
+**Fresh-clone distinction:** assay data and the legacy validation JSON are
+committed. The newer fitted models, embedding matrices, generated reports, and
+Boltz downloads are ignored and are not delivered by `git clone`. Reproduce
+those artifacts with the commands in the advanced sections below. On the
+original development machine they already exist. Missing artifacts must be
+reported as unavailable, not replaced with example numbers.
+
 ## Implementation status (updated 2026-11-14)
 
 | Component | Status | Verification |
@@ -18,7 +139,7 @@ This is a research prototype, not a treatment recommender.
 | Full 4,925-variant GPU embedding run | Passed | Finite `(4925, 480)` matrix; evaluated heads saved and reloaded successfully |
 | Boltz | Four-complex benchmark completed | Five samples per complex; T315I contrast supported, H396P missed; $0.40 total estimate |
 | Literature/agent adapters | Incomplete | Deterministic reports work; evidence remains separate |
-| UI | Deferred | No UI work in this phase |
+| UI | Separate local work | Not included in the checked-in backend release; no hosted app |
 
 ## Run the backend
 
@@ -91,7 +212,8 @@ bounds and exclude censored values from exact-error metrics.
 ## Optional dependencies and sponsor tools
 
 ```powershell
-python -m venv .venv
+# Create an environment only if one does not already exist:
+if (-not (Test-Path .venv)) { python -m venv .venv }
 .venv\Scripts\python -m pip install torch fair-esm numpy scikit-learn
 # Modal GPU scripts only:
 .venv\Scripts\python -m pip install modal
@@ -125,7 +247,7 @@ uses the bundled study reference and retries entries previously marked as errors
 - `output/model/`: checked-in legacy validation artifact; new generated output
   remains ignored.
 - `tests/`: deterministic service-mocked workflow tests (also pytest-compatible).
-- `ui/`: separate prototype; UI work is currently deferred.
+- `ui/`: separate local UI work; not included in this backend release.
 
 ## Remaining backend work
 
@@ -190,7 +312,7 @@ positions; zero shared positions. ESM2 35M, actual bundled study reference
 | --- | --- | --- | --- | --- |
 | Ridge | 0.01978 | 0.2168 | 0.2172 | 10.8% |
 | HistGradientBoosting | 0.01926 | 0.2681 | 0.2989 | 11.7% |
-| Training-mean baseline | 0.02080 | ? | ? | ? |
+| Training-mean baseline | 0.02080 | n/a | n/a | n/a |
 
 These are a new run's results, separate from the legacy checked-in artifact.
 Do not mix their metrics or predictions. The full manifest records the exact
@@ -254,8 +376,8 @@ The comparison excludes residue 336: ASN in the study reference versus SER in
 1IEP. Positions outside experimental coverage are also excluded. Details are in
 `structural_validation.json`. This known-complex comparison may overlap model
 training data and does not establish generalization, ligand-pose accuracy, or
-drug-response accuracy. A mutation-response benchmark still needs labeled
-mutant controls. ESM response-model validation is a separate result above.
+drug-response accuracy. The labeled mutant contrast pilot is described below;
+it does not establish generalization. ESM response-model validation is separate.
 
 ## Completed four-complex Boltz contrast benchmark
 
