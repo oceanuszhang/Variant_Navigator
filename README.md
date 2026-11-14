@@ -216,7 +216,7 @@ were deliberate and one is outstanding.
 | --- | --- | --- |
 | Load the 4,925 variants | ✅ | `pipeline/dms.py` |
 | Target = `netgrowth_mean_corrected` | ✅ | `dms.RESPONSE` |
-| Construct mutants from the **518-aa** ABL1 reference | ⚠️ **changed** | P00519 is **1130 aa** — see below |
+| Construct mutants from the **518-aa** ABL1 reference | ⚠️ **changed** | Used full P00519 (1130 aa) for ESM *context*; the 518-mer is numerically fine — see below |
 | ESM-2 35M over reference + mutant sequences | ✅ | `scripts/embed_variants.py` |
 | Embedding at the mutated residue | ✅ | `h[i]`, never a pooled mean |
 | Feature = mutant − reference | ✅ | mean \|feature\| = 0.139 |
@@ -236,11 +236,30 @@ were deliberate and one is outstanding.
 
 ### The three deviations, and why
 
-**518-aa reference → 1130-aa P00519.** The plan's figure is wrong: UniProt
-P00519 is 1130 aa and the DMS tiles residues 242–512. Applying position 315 to a
-518-residue sequence mutates the wrong residue in **every row**. The numbering
-was verified against the real sequence at six residues before any compute ran,
-and `embed_variants.py` refuses the whole run on a mismatch.
+**518-aa reference → full-length P00519 (1130 aa).** An earlier version of this
+README claimed the 518-aa reference would mutate the wrong residue in every row.
+**That was wrong, and it is corrected here.** The 518-mer is the source repo's
+own `data/Refs/ABL/abl_cds_translation.txt`, and it is P00519 truncated to
+residues 1–518:
+
+```
+anchor tr[200:240] found in P00519 at index 200   ->  offset 0
+translation[315] = T                                   (gatekeeper, correct)
+across 270 DMS positions: 270 residue matches, 0 mismatches
+```
+
+So the 518-mer is **numerically safe** — the plan was right about that. The
+reason to use the full sequence is **ESM context, not correctness**: in a
+518-residue reference the DMS range 242–512 sits flush against the C-terminus,
+so residues near 512 have almost no right-hand context, while in the 1–1022 crop
+every scored residue has ~500 residues on both sides. More context usually helps
+a masked language model, but that is an empirical claim and has not been
+measured here — the 518 crop is a legitimate ablation to run.
+
+What *does* need the guard is the general case: `embed_variants.py` validates
+every variant against the reference residue before spending compute and refuses
+the run on a mismatch. That is what would catch a genuinely mis-anchored
+construct, which this one turned out not to be.
 
 **XGBoost → sklearn HistGradientBoosting.** Equivalent algorithm, already
 installed, no new dependency. It also lost to ridge at every rung of the earlier
