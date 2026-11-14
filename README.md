@@ -16,7 +16,7 @@ This is a research prototype, not a treatment recommender.
 | Model provenance/loader | Verified | Nine regression tests pass, including checksum, dimension, partial-run, and optional-service guards |
 | Single-variant saved ESM inference | Passed live verification | Fresh T315I Modal embedding exactly matches saved batch prediction; separate from measured response |
 | Full 4,925-variant GPU embedding run | Passed | Finite `(4925, 480)` matrix; evaluated heads saved and reloaded successfully |
-| Boltz | Guarded optional integration | Live authentication/control run pending |
+| Boltz | Live smoke test passed | CLI v0.44.0, OAuth verified; ABL1 WT/imatinib completed and downloaded; 0.708 A backbone RMSD vs 1IEP |
 | Literature/agent adapters | Incomplete | Deterministic reports work; evidence remains separate |
 | UI | Deferred | No UI work in this phase |
 
@@ -112,7 +112,7 @@ Boltz uses its own `boltz-api` CLI and OAuth session, not Modal tokens.
 Boltz availability, budget rejection, timeout, and crop errors are recorded as
 skips, allowing reporting to continue. The wrapper is never invoked for EGFR
 or variants outside its validated crop. Budget caps are per call, not a total
-account spending limit. Live services have not been verified by offline tests. The Boltz panel script
+account spending limit. Boltz has a separately verified live smoke run; offline tests still mock services. The Boltz panel script
 uses the bundled study reference and retries entries previously marked as errors.
 
 ## Project layout
@@ -208,3 +208,50 @@ $env:PYTHONUTF8 = '1'
 The final command uses online sequence/geometry services and explicitly requests
 one Modal model estimate; it keeps measured assay lookup separate. Boltz is
 still disabled unless `--boltz` is supplied.
+
+## Boltz Windows setup and verified smoke run
+
+Boltz CLI v0.44.0 is installed at
+`$env:LOCALAPPDATA/Programs/Boltz/bin/boltz-api.exe`. OAuth device-code login and
+`auth status` succeeded. The backend searches this install location even if
+PATH has not been refreshed. `Get-Command codex` returned no CLI, so the Codex
+Boltz plugin installation was skipped (the desktop agent is separate).
+
+Reproduce the prepared smoke test from the repository root:
+
+```powershell
+$boltz = "$env:LOCALAPPDATA/Programs/Boltz/bin/boltz-api.exe"
+python scripts/prepare_boltz_smoke.py
+& $boltz --version
+& $boltz auth status
+& $boltz predictions:structure-and-binding estimate-cost --input '@json://output/structures/boltz_smoke/input.json' --model boltz-2.1 --format json
+# Submit only after reviewing the estimate ($0.05 for this input).
+& $boltz predictions:structure-and-binding run --input '@json://output/structures/boltz_smoke/input.json' --model boltz-2.1 --idempotency-key fb3859f7-df1a-5821-89f8-0ae59f006a9c --run-dir output/structures/boltz_smoke/run --progress-format text --format json
+.venv\Scripts\python scripts/validate_boltz_structure.py output/structures/boltz_smoke/run
+```
+
+The `run` command starts, polls, and downloads results. Reuse the same key for
+retries of this exact payload. The preparation helper derives it from model and
+canonical input, and the backend now uses deterministic keys on submissions.
+A changed input or model requires its newly derived key.
+
+Verified prediction: `sab_pred_FMkTtK11sB2QCvCvlt6f`, status `succeeded`.
+One sample, ABL1 wild-type crop 242-512 (271 aa), imatinib. Results are under
+`output/structures/boltz_smoke/run`, including predicted mmCIF, metrics, PAE,
+and an archive. These generated artifacts remain ignored by Git.
+
+| Result | Value | Interpretation |
+| --- | --- | --- |
+| Estimated cost | $0.05 | Estimate, not a verified billing total |
+| Complex pLDDT | 94.29/100 | Model confidence, not measured accuracy |
+| pTM / ipTM | 0.956 / 0.981 | Model confidence |
+| Binding confidence | 0.579 | Not a probability of clinical response |
+| C-alpha RMSD vs experimental 1IEP chain A | 0.708 A | Rigid Kabsch alignment of 256 sequence-matched residues, positions 242-498 |
+| Median aligned C-alpha deviation | 0.377 A | Same matched residues, no outlier trimming |
+
+The comparison excludes residue 336: ASN in the study reference versus SER in
+1IEP. Positions outside experimental coverage are also excluded. Details are in
+`structural_validation.json`. This known-complex comparison may overlap model
+training data and does not establish generalization, ligand-pose accuracy, or
+drug-response accuracy. A mutation-response benchmark still needs labeled
+mutant controls. ESM response-model validation is a separate result above.

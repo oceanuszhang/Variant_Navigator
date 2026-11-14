@@ -63,6 +63,7 @@ keyed by the full request, so re-running a variant never spends twice.
 from __future__ import annotations
 
 import hashlib
+import uuid
 import json
 import os
 import shutil
@@ -130,9 +131,14 @@ def _cli() -> str:
     found = shutil.which("boltz-api") or shutil.which(
         "boltz-api", path=str(Path.home() / ".local/bin")
     )
+    if not found and os.name == "nt":
+        local_app_data = os.getenv("LOCALAPPDATA")
+        candidate = Path(local_app_data) / "Programs/Boltz/bin/boltz-api.exe" if local_app_data else None
+        if candidate is not None and candidate.is_file():
+            found = str(candidate)
     if not found:
         raise BoltzUnavailable(
-            "boltz-api not found on PATH or in ~/.local/bin; "
+            "boltz-api not found on PATH or in standard install locations; "
             "install the CLI and run `boltz-api auth login`"
         )
     return found
@@ -404,6 +410,13 @@ def _confidence(run_json: dict[str, Any]) -> tuple[float, float | None, dict]:
 # --------------------------------------------------------------------------
 # the stage
 # --------------------------------------------------------------------------
+
+def idempotency_key(body: dict[str, Any], model: str = MODEL) -> str:
+    """Stable submission identity for the exact model and request payload."""
+    raw = json.dumps(body, sort_keys=True, indent=2)
+    digest = hashlib.sha256(raw.encode()).hexdigest()
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"variantnavigator/{model}/{digest}"))
+
 
 def _cache_key(body: dict[str, Any], model: str) -> str:
     blob = json.dumps(
