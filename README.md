@@ -45,6 +45,43 @@ that are not wired up yet are **skipped with a note** rather than crashing, so
 | `drug_screen.py` | Stub — panel loading + ranking real, Ptarmigan-1 call pending docs |
 | `agent_report.py` | Partial — deterministic markdown renderer works, Keenable call pending docs |
 
+## Tools
+
+### In use now (working, committed)
+
+| Tool | Step | Function | Key needed |
+| --- | --- | --- | --- |
+| **UniProt REST API** | 1 | Wildtype sequence + annotated binding-site residues | No |
+| **PubChem PUG REST** | 4 | Source of SMILES for all 36 panel drugs | No |
+| **Python stdlib** (`urllib`, `re`, `dataclasses`) | 1 | Variant parsing + mutant generation | No |
+
+### Planned (interfaces fixed, awaiting credentials or wiring)
+
+| Tool | Step | Function | Key needed |
+| --- | --- | --- | --- |
+| **ESM2 (650M)** | 2 | Evolutionary tolerance / functional impact score | via Modal |
+| **Modal** | 2, 3 | GPU compute backend for ESM2 + Boltz | `MODAL_TOKEN_ID`, `MODAL_TOKEN_SECRET` |
+| **Boltz** | 3 | Mutant structure prediction + pocket RMSD | via Modal |
+| **Ptarmigan-1** (Talus Bio) | 4 | Drug–mutant binding affinity screening | `PTARMIGAN_API_KEY` **+ docs** |
+| **Keenable** | 5 | Agent orchestration + report generation | `KEENABLE_API_KEY` **+ docs** |
+
+### Ground-truth references (Step 5 cross-referencing)
+
+| Source | Domain | Access | Key needed |
+| --- | --- | --- | --- |
+| **OncoKB** | Cancer | REST API, registration required | `ONCOKB_API_TOKEN` |
+| **ClinVar** | Cancer | NCBI E-utilities | No (`NCBI_API_KEY` raises rate limit) |
+| **CARD** | Antimicrobial | Bulk download + local lookup | No (free account for download) |
+| **FRAC** | Agriculture | **No API** — published tables, manual curation | n/a |
+
+### Considered and not used
+
+| Tool | Why |
+| --- | --- |
+| **BioPython** | Spec assigned it Step 1 variant application. Not needed — `mutant.py` does this on the stdlib, and skipping the dependency keeps the demo install trivial. Still listed in `requirements.txt` as optional; drop it if nothing else claims it. |
+| **DrugBank / ChEMBL** | Spec's SMILES source. Used PubChem instead: no key, no licence friction, and it resolved all 36 drugs first try. DrugBank requires a licence for bulk/commercial use. |
+| **AlphaGenome2** | Contrast only, per the plan — it returns expression predictions, not treatment efficacy. Not a pipeline dependency. |
+
 ## Benchmark controls
 
 Five cases across three domains; `python main.py --test-case all` runs them all.
@@ -128,7 +165,9 @@ until then, treat output as a pipeline demo, not a prediction.
 
 ## Blocked / needs you
 
-- **Ptarmigan-1 and Keenable API keys + docs.** No DNAForge repo is reachable from this account, and neither API has public docs, so both calls are stubs with a fixed interface. Drop the keys in `.env` (gitignored) and send the docs.
+- **Ptarmigan-1 and Keenable API keys + docs.** No DNAForge repo is reachable from this account, and neither API has public docs, so both calls are stubs with a fixed interface. Drop the keys in `.env` (gitignored) and send the docs. **These two are the critical path** — Steps 4 and 5 cannot run without them.
+- **OncoKB API token**, if you want Step 5 to cross-reference sensitivity calls programmatically rather than by hand.
+- **"Paperclip"** — not in the plan doc and nothing by that name turns up in protein/drug-binding tooling. Send a link or say what it does and I will slot it in; see the note below.
 - **Repo name.** This is `Variant_Navigator`, not `variant-navigator` — kept as-is to avoid breaking your clone; say the word if you want it renamed.
 
 ## Scope note
