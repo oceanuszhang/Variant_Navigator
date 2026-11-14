@@ -32,6 +32,18 @@ python main.py --test-case all          # all five controls, 3 domains
 that are not wired up yet are **skipped with a note** rather than crashing, so
 `main.py` always produces a report.
 
+For the ESM2 and model stages, use the project venv (torch is the only heavy
+dependency, and it is optional — without it every caller skips):
+
+```bash
+python -m venv .venv
+.venv/bin/python -m pip install torch fair-esm numpy scikit-learn
+
+.venv/bin/python -m pipeline.esm2_score                            # cache marginals
+.venv/bin/python scripts/train_baseline.py --esm esm2_t12_35M_UR50D  # the ladder
+python main.py --gene P00519 --variant G250L --mode oncology       # one variant
+```
+
 ## Status
 
 | Module | State |
@@ -44,7 +56,9 @@ that are not wired up yet are **skipped with a note** rather than crashing, so
 | `baseline.py` | **Working** — the only predictive stage that needs no credentials |
 | `evidence.py` | **Working** — Paperclip returns live PMC citations |
 | `data/drug_panels/` | **Working** — 11 oncology + 12 fungicide + 13 antibiotic drugs, SMILES from PubChem |
-| `esm2_score.py` | Stub — **blocked on `torch`, not on a key**; see "Is ESM2 wired?" |
+| `esm2_score.py` | **Working** — ESM2 masked marginals, local on MPS, cached |
+| `features.py` | **Working** — substitution / position / ESM blocks, ablatable |
+| `predict.py` | **Working** — measurement when known, model otherwise |
 | `boltz_structure.py` | Stub — interface fixed, awaiting Modal wiring |
 | `drug_screen.py` | Stub — panel loading + ranking real, Ptarmigan-1 call pending docs |
 | `agent_report.py` | Partial — deterministic markdown renderer works, Keenable call pending docs |
@@ -193,37 +207,127 @@ Two further facts that constrain any model built on this data:
   drug *works*. A single scalar cannot separate "kinase dead" from "drug
   evaded", and the two have opposite clinical meaning.
 
-### Is ESM2 wired? No — and it is not blocked on a key
+## The model — exactly what it is
 
-`esm2_score.py` is still a stub that raises `NotImplementedError`. It is blocked
-on **`torch`, which is not installed in either interpreter on this machine** —
-not on credentials.
+### One sentence
 
-When it is wired, the embedding must be used correctly, because the obvious
-approach fails here:
+A **ridge regression** on 32 features — 23 substitution-chemistry, 4
+pocket-geometry and 5 **ESM2 masked-marginal** — predicting Ba/F3 net growth
+under 1200 nM imatinib, trained on 4,925 measured BCR-ABL variants and
+evaluated by **position-grouped** 5-fold cross-validation.
 
-- All 4,925 variants are **the same protein**. There is one reference sequence,
-  not 4,925, and any two mutant sequences are **99.82% identical**.
-- A mean-pooled whole-sequence embedding therefore returns an almost identical
-  vector for every variant. A linear model on it has no signal to fit.
+```bash
+# the honest evaluation ladder
+.venv/bin/python scripts/train_baseline.py --esm esm2_t12_35M_UR50D
 
-What works instead, in increasing cost:
+# one variant, end to end
+python main.py --gene P00519 --variant G250L --mode oncology
+```
 
-1. **Masked-marginal log-likelihood** (zero-shot, no training):
-   `score = log P(alt | mask at i) − log P(ref | mask at i)`. One forward pass
-   per *position* (270), one scalar per variant. This is the standard ESM-1v /
-   ESM2 variant-effect method.
-2. **Per-residue hidden state at the mutated position**, not the pooled mean,
-   concatenated with an encoding of ref→alt. Varies per variant, and trainable
-   with ridge regression.
-3. **Mutant-marginal**: embed each mutant sequence and read the hidden state at
-   the mutated site. 4,925 forward passes, tractable with the 35M model.
+### Results
 
-And a caveat worth stating up front: **ESM scores evolutionary likelihood, not
-drug resistance.** It should predict the "is the kinase still functional" axis
-well, since that is conservation, and predict drug escape poorly — T315I is both
-highly conserved and the most famous imatinib-resistance mutation. Expect ESM to
-complement pocket geometry, not to subsume it.
+5-fold position-grouped CV, pooled out-of-fold, ESM2-35M:
+
+| features | model | r | Spearman | MAE | n feats |
+| --- | --- | --- | --- | --- | --- |
+| global mean | — | −0.078 | −0.072 | 0.0207 | — |
+| position only | hist_gbm | 0.108 | 0.139 | 0.0206 | 4 |
+| substitution only | ridge | 0.233 | 0.243 | 0.0196 | 23 |
+| all (no ESM) | random_forest | 0.245 | 0.238 | 0.0196 | 27 |
+| **ESM only** | ridge | **0.291** | 0.293 | 0.0192 | **5** |
+| substitution + ESM | ridge | 0.331 | 0.342 | 0.0188 | 28 |
+| **all + ESM** | **ridge** | **0.3315** | **0.339** | **0.0189** | 32 |
+
+Reported against the **attenuated ceiling of r = 0.978**, not against 1.0: with
+two noisy replicates (replicate r = 0.916), no model can exceed that. So
+**0.3315 is 34% of attainable**, at MAE 2.7× the replicate noise floor.
+
+### Three findings from the ladder
+
+1. **ESM2 alone, 5 features, beats all 27 hand-engineered features combined**
+   (0.291 vs 0.245). It is the single most valuable block.
+2. **Pocket geometry contributes almost nothing.** 0.233 → 0.2345 when added to
+   substitution chemistry, and 0.3312 → 0.3315 when added on top of ESM. Three
+   decimal places of nothing. Distance alone against all 4,665 structurally
+   covered variants is **r = 0.069**.
+3. **Ridge beats gradient boosting and random forest at every rung.** With 4,925
+   rows and ~32 features the relationship is close to linear, and the extra
+   capacity only fits noise. XGBoost was deliberately not installed — sklearn's
+   `HistGradientBoostingRegressor` was already present and lost anyway.
+
+### Why ESM2 is used as masked marginals, not embeddings
+
+Every variant is the same protein, so any two mutant sequences are **99.82%
+identical**. A mean-pooled whole-sequence embedding returns a nearly identical
+vector for all 4,925 variants and a model fit on it has nothing to separate.
+Instead, per ESM-1v, we mask the position and read the model's own distribution:
+
+```
+score(ref → alt at i) = log P(alt | x masked at i) − log P(ref | x masked at i)
+```
+
+One forward pass per **position** (271), not per variant, covering all 4,925
+variants. Five features come out: `delta_ll` and `ll_alt` vary per substitution,
+while `ll_ref` and `entropy` are position-level conservation measures, plus a
+`has_esm` flag so unscored positions are a declared gap rather than a silent 0.
+
+**Length limit, which bites here.** ESM2 has 1024 position embeddings and ABL1
+P00519 is 1130 aa, so the full sequence will not fit. We crop to residues
+**1–1022**, which still contains the whole kinase domain (242–512) with ~240
+residues of leading context. The crop is recorded in the cache key, so scores
+can never be silently compared across different crops.
+
+### ESM2 measures conservation, not resistance
+
+Worth internalising before trusting it. The masked-marginal scores for known
+imatinib-resistance mutations:
+
+```
+T315I   delta_ll = -2.901      the classic gatekeeper escape
+Y253H   delta_ll = -4.354
+M351T   delta_ll = -8.430
+H396R   delta_ll = +1.023
+G250E   delta_ll = +2.776
+```
+
+ESM calls the most famous resistance mutations **unlikely**, because those sites
+are conserved. It is scoring evolutionary plausibility, not drug escape. It still
+helps a great deal, and the reason is mechanistic: Ba/F3 cells here **depend on
+BCR-ABL to survive**, so net growth falls when the kinase is broken and rises
+when the drug is evaded. ESM predicts the first axis well and the second not at
+all — which is precisely why it is complementary rather than sufficient.
+
+### What is deliberately not claimed
+
+- **No log₂ fold change.** `baseline.calibrated()` returns `False`. The matrix
+  cell in `figures/prediction_matrix.svg` needs a dose-ratio regression; the
+  IC₅₀ table that would support it is fetched but not yet wired.
+- **A measurement beats a prediction.** `predict.py` returns the real measured
+  value for the 4,925 variants in the screen and only predicts for the
+  remaining 224. Re-predicting known values would flatter the demo.
+- **Ranking, not thresholds.** At r = 0.33 the output orders variants; it does
+  not support a clinical cutoff, and every report says so.
+
+### Is ESM2 wired? Yes — here is what it needed
+
+It runs locally on Apple Silicon via MPS — **no Modal, no GPU rental, no API
+key**. It needed `torch` and `fair-esm`, which were absent from both system
+interpreters, so they live in a project venv:
+
+```bash
+python -m venv .venv
+.venv/bin/python -m pip install torch fair-esm numpy scikit-learn
+.venv/bin/python -m pipeline.esm2_score          # 271 positions, seconds on MPS
+```
+
+Scores are cached to `data/esm/` keyed by model **and crop**, so a second run is
+instant and a stale crop can never be mistaken for a fresh one. `available()`
+returns `False` without torch and every caller skips rather than crashing, so
+`python main.py` still works on the stdlib-only interpreter.
+
+Two model sizes are wired. `esm2_t12_35M_UR50D` is the fast default used for the
+numbers above; `esm2_t33_650M_UR50D` is the better model and the one
+`esm2_score.DEFAULT_MODEL` points at.
 
 ### Repo structure
 
@@ -243,14 +347,18 @@ pipeline/
 ├── pocket.py       # min heavy-atom distance to the bound ligand     [working]
 ├── dms.py          # BCR-ABL DMS loader, noise floor, position CV    [working]
 ├── baseline.py     # distance -> contact score -> call; no keys      [working]
+├── features.py     # substitution / position / ESM blocks            [working]
+├── esm2_score.py   # ESM2 masked marginals, local on MPS, cached     [working]
+├── predict.py      # measurement if known, trained model otherwise   [working]
 ├── evidence.py     # Paperclip retrieval, isolated from prediction   [working]
-├── esm2_score.py   # ESM-2 via Modal; blocked on torch, not a key    [stub]
 ├── boltz_structure.py # Boltz-2 via Tamarind Bio                     [stub]
 ├── drug_screen.py  # Ptarmigan-1; key present, awaiting API docs     [stub]
 └── agent_report.py # report writer; Keenable agent to be wired       [partial]
 scripts/
-└── make_figures.py # regenerates figures/ from live pocket geometry
+├── make_figures.py    # regenerates figures/ from live pocket geometry
+└── train_baseline.py  # the ablation ladder under position-grouped CV
 figures/            # SVG, written straight from the code that computes them
+data/esm/           # cached masked marginals, keyed by model AND crop
 ```
 
 ### Figures
@@ -285,8 +393,17 @@ Two that cost real debugging time on this machine:
 | Tool | Step | Function | Key needed |
 | --- | --- | --- | --- |
 | **UniProt REST API** | 1 | Wildtype sequence + annotated binding-site residues | No |
-| **PubChem PUG REST** | 4 | Source of SMILES for all 36 panel drugs | No |
+| **PubChem PUG REST** | 4 | Source of SMILES for all 37 panel drugs | No |
+| **RCSB PDB** | — | Biological assemblies for pocket geometry | No |
+| **BCR-ABL DMS** (MIT) | — | 4,925 measured variants: the training labels | No |
+| **ESM2** (`fair-esm`) | 2 | Masked-marginal variant scores, local on MPS | **No** |
+| **scikit-learn** | — | Ridge / HistGBM / RandomForest + the CV harness | No |
+| **Paperclip** (CLI) | 5 | Literature evidence, isolated from prediction | No |
 | **Python stdlib** (`urllib`, `re`, `dataclasses`) | 1 | Variant parsing + mutant generation | No |
+
+Note what is *absent* from that list: **no Modal, no GPU rental, no inference
+API**. ESM2 runs on the laptop. The only remaining credentialed dependency on
+the prediction path is Ptarmigan-1, which is optional.
 
 ### Planned (interfaces fixed, awaiting credentials or wiring)
 

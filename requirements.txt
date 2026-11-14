@@ -23,8 +23,25 @@
 # Re-add them in the extras below if and when the stubs are actually wired.
 # ---------------------------------------------------------------------------
 
-# Optional, for the stages that are still stubs and need credentials:
-#   modal>=0.64.0     # GPU backend for esm2_score.py + boltz_structure.py
+# ---------------------------------------------------------------------------
+# OPTIONAL: the ESM2 + trained-model stages.
+#
+# Install into a venv, not the system interpreter:
+#   python -m venv .venv
+#   .venv/bin/python -m pip install torch fair-esm numpy scikit-learn
+#
+# ESM2 runs locally on Apple Silicon via MPS, so no Modal and no GPU rental.
+# Without these, esm2_score.available() and predict.available() return False
+# and every caller skips with a note - `python main.py` still works.
+#
+#   torch>=2.0            # ESM2 inference; ~140 MB wheel on arm64
+#   fair-esm>=2.0.0       # ESM2 model loaders
+#   numpy>=1.26           # required by torch's interop and by sklearn
+#   scikit-learn>=1.4     # ridge / HistGBM / random forest + the CV harness
+# ---------------------------------------------------------------------------
+
+# Optional, for the stubs that still need credentials:
+#   modal>=0.64.0     # only if esm2/boltz are moved off-laptop; not needed now
 #   requests>=2.32.0  # if a wired API client is easier to write with it
 
 # Optional, for development:

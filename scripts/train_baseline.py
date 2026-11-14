@@ -84,10 +84,13 @@ def make_models() -> dict:
 
 
 def evaluate(
-    variants: list, *, blocks: str, model_name: str, folds: int, leaky: bool
+    variants: list, *, blocks: str, model_name: str, folds: int, leaky: bool,
+    esm_marginals: dict | None = None,
 ) -> dict:
     """Out-of-fold predictions, pooled, then scored once."""
-    X, y, groups, names = features.featurize(variants, blocks=blocks)
+    X, y, groups, names = features.featurize(
+        variants, blocks=blocks, esm_marginals=esm_marginals
+    )
     builder = make_models()[model_name] if model_name != "mean" else None
 
     oof_true: list[float] = []
@@ -139,10 +142,27 @@ def main() -> int:
     ap.add_argument("--folds", type=int, default=5)
     ap.add_argument("--leaky", action="store_true",
                     help="split by row instead of position, to show the inflation")
+    ap.add_argument("--esm", metavar="MODEL", nargs="?",
+                    const="esm2_t33_650M_UR50D", default=None,
+                    help="add ESM2 masked-marginal features (needs torch+fair-esm)")
     args = ap.parse_args()
 
     vs = dms.load_netgrowth()
     nf = dms.noise_floor(vs)
+    mar = None
+    if args.esm:
+        import json, urllib.request
+        from pipeline import esm2_score
+        if not esm2_score.available():
+            print("ESM requested but torch/fair-esm missing; run with the venv python")
+            return 1
+        seq = json.load(urllib.request.urlopen(
+            "https://rest.uniprot.org/uniprotkb/P00519.json?fields=sequence",
+            timeout=60))["sequence"]["value"]
+        mar = esm2_score.masked_marginals(
+            seq, sorted({v.position for v in vs}),
+            model_name=args.esm, accession="P00519",
+        )
     print(f"BCR-ABL DMS — {len(vs)} variants, {len({v.position for v in vs})} positions")
     print(f"replicate r = {nf['replicate_pearson_r']}  ->  attenuated ceiling "
           f"r = {nf['attenuated_r_ceiling']}   (scoring above this = fitting noise)")
@@ -163,9 +183,18 @@ def main() -> int:
         ("all", "hist_gbm"),
         ("all", "random_forest"),
     ]
+    if mar is not None:
+        plan += [
+            ("esm", "ridge"),
+            ("esm", "hist_gbm"),
+            ("substitution+esm", "ridge"),
+            ("all+esm", "ridge"),
+            ("all+esm", "hist_gbm"),
+            ("all+esm", "random_forest"),
+        ]
     for blocks, model in plan:
         r = evaluate(vs, blocks=blocks, model_name=model,
-                     folds=args.folds, leaky=args.leaky)
+                     folds=args.folds, leaky=args.leaky, esm_marginals=mar)
         rows.append(r)
         label = "global mean" if model == "mean" else blocks
         print(f"{label:16} {model:14} {r['pearson_r']:>8.4f} "

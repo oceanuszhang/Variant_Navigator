@@ -104,12 +104,19 @@ def run(
     # 3 — ESM2 sequence-model score
     print("[3/6] ESM2 scoring…", end=" ", flush=True)
     try:
-        score = esm2_score.score_variant(protein.sequence, mutant.sequence, variant)
+        if not esm2_score.available():
+            raise esm2_score.ESMUnavailable(
+                "torch / fair-esm not installed; use .venv/bin/python"
+            )
+        score = esm2_score.score_variant(
+            protein.sequence, mutant.sequence, variant,
+            accession=protein.accession,
+        )
         payload["esm2"] = score.__dict__
-        print(f"Δll={score.delta_ll:+.3f}")
-    except NotImplementedError as exc:
+        print(f"Δll={score.delta_ll:+.3f} ({score.model})")
+    except (NotImplementedError, esm2_score.ESMUnavailable, OSError) as exc:
         payload["skipped_stages"].append({"stage": "esm2", "reason": str(exc)})
-        print("skipped (not wired)")
+        print(f"skipped ({str(exc)[:60]})")
 
     # 4 — mutant structure
     print("[4/6] Boltz structure…", end=" ", flush=True)

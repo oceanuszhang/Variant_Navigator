@@ -11,3 +11,6 @@ output/structures/*
 !output/reports/.gitkeep
 !output/structures/.gitkeep
 data/structures/
+
+.venv/
+data/esm/

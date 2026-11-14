@@ -93,6 +93,10 @@ SUBSTITUTION_NAMES = [
 
 POSITION_NAMES = ["distance_angstrom", "contact_score", "domain_frac", "has_distance"]
 
+# ESM2 masked marginals. `delta_ll` and `ll_alt` vary per substitution; `ll_ref`
+# and `entropy` are position-level conservation measures.
+ESM_NAMES = ["esm_delta_ll", "esm_ll_ref", "esm_ll_alt", "esm_entropy", "has_esm"]
+
 FEATURE_NAMES = SUBSTITUTION_NAMES + POSITION_NAMES
 
 
@@ -150,12 +154,35 @@ def position_features(
     return [d, contact_score(d), frac, 1.0]
 
 
+def esm_features(
+    position: int, ref: str, alt: str, marginals: dict[str, Any] | None
+) -> list[float]:
+    """ESM2 masked-marginal features for one substitution.
+
+    `has_esm` flags an unscored position so a model can distrust the filler
+    instead of reading zeros as a confident prediction.
+    """
+    import math
+
+    row = ((marginals or {}).get("log_probs") or {}).get(str(position))
+    if not row:
+        return [0.0, 0.0, 0.0, 0.0, 0.0]
+    lr = row.get(ref.upper())
+    la = row.get(alt.upper())
+    if lr is None or la is None:
+        return [0.0, 0.0, 0.0, 0.0, 0.0]
+    # Entropy over the 20 standard residues: high = tolerant position.
+    ent = -sum(math.exp(v) * v for v in row.values())
+    return [la - lr, lr, la, ent, 1.0]
+
+
 def featurize(
     variants: list[Any],
     *,
     compound: str = "imatinib",
     domain: tuple[int, int] = (242, 512),
     blocks: str = "all",
+    esm_marginals: dict[str, Any] | None = None,
 ) -> tuple[list[list[float]], list[float], list[int], list[str]]:
     """Build the design matrix.
 
@@ -163,27 +190,38 @@ def featurize(
     (X, y, groups, feature_names) where `groups` is the residue position, for
     group-aware cross-validation.
     """
-    if blocks not in {"all", "substitution", "position"}:
-        raise ValueError(f"unknown blocks={blocks!r}")
+    valid = {"all", "substitution", "position", "esm", "all+esm",
+             "substitution+esm", "position+esm"}
+    if blocks not in valid:
+        raise ValueError(f"unknown blocks={blocks!r}, expected one of {sorted(valid)}")
+    want_sub = blocks in ("all", "substitution", "all+esm", "substitution+esm")
+    want_pos = blocks in ("all", "position", "all+esm", "position+esm")
+    want_esm = blocks.endswith("esm")
+    if want_esm and esm_marginals is None:
+        raise ValueError(f"blocks={blocks!r} needs esm_marginals")
     cache: dict[int, float] = {}
     X: list[list[float]] = []
     y: list[float] = []
     groups: list[int] = []
     for v in variants:
         row: list[float] = []
-        if blocks in ("all", "substitution"):
+        if want_sub:
             row += substitution_features(v.ref_aa, v.alt_aa)
-        if blocks in ("all", "position"):
+        if want_pos:
             row += position_features(
                 v.position, compound=compound, ref=v.ref_aa,
                 domain=domain, distance_cache=cache,
             )
+        if want_esm:
+            row += esm_features(v.position, v.ref_aa, v.alt_aa, esm_marginals)
         X.append(row)
         y.append(v.response)
         groups.append(v.position)
-    names = {
-        "all": FEATURE_NAMES,
-        "substitution": SUBSTITUTION_NAMES,
-        "position": POSITION_NAMES,
-    }[blocks]
+    names: list[str] = []
+    if want_sub:
+        names += SUBSTITUTION_NAMES
+    if want_pos:
+        names += POSITION_NAMES
+    if want_esm:
+        names += ESM_NAMES
     return X, y, groups, names
