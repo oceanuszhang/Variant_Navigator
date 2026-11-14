@@ -136,7 +136,9 @@ def main() -> int:
     print()
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
-    stem = OUT_DIR / f"{UNIPROT}_{args.model}_mutdiff"
+    # A --limit run must never overwrite a full one: tag partial outputs.
+    suffix = "_mutdiff" if not args.limit else f"_mutdiff_n{len(variants)}"
+    stem = OUT_DIR / f"{UNIPROT}_{args.model}{suffix}"
     np.savez_compressed(
         f"{stem}.npz", X=X, y=y, groups=groups, rep1=rep1, rep2=rep2,
         names=np.array(names), crop=np.array([lo, hi]), model=np.array([args.model]),

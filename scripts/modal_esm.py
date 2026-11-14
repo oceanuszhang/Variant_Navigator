@@ -126,7 +126,9 @@ def main(model: str = LARGE, limit: int = 0, batch: int = 32):
     rep2 = np.array([np.nan if v.rep2 is None else v.rep2 for v in variants], dtype=np.float32)
     names = np.array([v.mutant for v in variants])
 
-    stem = out_dir / f"P00519_{model}_mutdiff"
+    # A --limit run must never overwrite a full one: tag partial outputs.
+    suffix = "_mutdiff" if not limit else f"_mutdiff_n{len(variants)}"
+    stem = out_dir / f"P00519_{model}{suffix}"
     np.savez_compressed(f"{stem}.npz", X=X, y=y, groups=groups, rep1=rep1,
                         rep2=rep2, names=names, crop=np.array([lo, hi]),
                         model=np.array([model]))
