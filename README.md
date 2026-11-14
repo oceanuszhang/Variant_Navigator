@@ -13,10 +13,10 @@ This is a research prototype, not a treatment recommender.
 | Modal authentication | Verified in existing `.venv` | Read-only app listing and actual GPU job succeeded |
 | ESM2 35M GPU smoke test | Passed | Four validated variants returned a finite `(4, 480)` feature matrix |
 | Saved regression models | Implemented and smoke-tested | Both heads reload with identical held-out predictions |
-| Model provenance/loader | Verified | Nine regression tests pass, including checksum, dimension, partial-run, and optional-service guards |
+| Model provenance/loader | Verified | Fourteen regression tests pass, including provenance, benchmark, and optional-service guards |
 | Single-variant saved ESM inference | Passed live verification | Fresh T315I Modal embedding exactly matches saved batch prediction; separate from measured response |
 | Full 4,925-variant GPU embedding run | Passed | Finite `(4925, 480)` matrix; evaluated heads saved and reloaded successfully |
-| Boltz | Live smoke test passed | CLI v0.44.0, OAuth verified; ABL1 WT/imatinib completed and downloaded; 0.708 A backbone RMSD vs 1IEP |
+| Boltz | Four-complex benchmark completed | Five samples per complex; T315I contrast supported, H396P missed; $0.40 total estimate |
 | Literature/agent adapters | Incomplete | Deterministic reports work; evidence remains separate |
 | UI | Deferred | No UI work in this phase |
 
@@ -133,8 +133,9 @@ uses the bundled study reference and retries entries previously marked as errors
   held-out performance is modest and it misses resistant T315 substitutions.
   Persistence and provenance are implemented; smoke artifacts are guarded.
 - Evaluate the runtime RandomForest reproducibly before attaching accuracy claims.
-- Validate Boltz results against measured controls; do not turn confidence into
-  drug work/fail calls or apply placeholder affinity thresholds.
+- Expand the completed Boltz pilot to a prespecified held-out variant panel,
+  including distal and loss-of-function controls. The current three-mutant pilot
+  misses H396P; do not turn confidence into drug work/fail or affinity values.
 - Connect literature evidence after predictions are fixed, and implement an
   optional report rewrite only if needed. Deterministic reporting is supported.
 - Add a service/API and deployment when the workflow contract is ready.
@@ -255,3 +256,71 @@ The comparison excludes residue 336: ASN in the study reference versus SER in
 training data and does not establish generalization, ligand-pose accuracy, or
 drug-response accuracy. A mutation-response benchmark still needs labeled
 mutant controls. ESM response-model validation is a separate result above.
+
+## Completed four-complex Boltz contrast benchmark
+
+WILDTYPE, T315I, T315A, and H396P were run with imatinib, crop 242-512,
+five samples each, boltz-2.1, and no pocket constraints. Residue identities and
+assay rows were checked before submission. Estimates were $0.10 each ($0.40
+total), under a $0.50 submission cap; this is not a verified billing total.
+All four jobs succeeded and all five structural samples per job were downloaded.
+
+| Variant | Measured net growth | Binding confidence | Difference from WT | Mean pLDDT +/- sample SD |
+| --- | --- | --- | --- | --- |
+| WILDTYPE | unavailable | 0.55689 | +0.00000 | 94.22 +/- 0.15 |
+| T315I | +0.04599 | 0.30562 | -0.25127 | 93.64 +/- 0.19 |
+| T315A | +0.00264 | 0.47980 | -0.07710 | 93.69 +/- 0.13 |
+| H396P | +0.04877 | 0.58440 | +0.02751 | 93.56 +/- 0.33 |
+
+**Finding:** binding confidence is lower for T315I than near-neutral T315A,
+supporting the prespecified gatekeeper contrast. H396P has high measured net
+growth but *higher* binding confidence than T315A and wild type, missing the
+prespecified allosteric contrast. One of two selected directional checks is
+supported. This is not a general accuracy percentage or a calibrated predictor.
+All four complexes have high structural confidence, so pLDDT alone does not
+separate the measured responses. No response MAE or drug work/fail verdict can
+be derived from confidence scores without an independently validated mapping.
+
+Wild-type growth is absent from the substitution dataset and is left missing.
+Binding confidence differences are not affinity shifts and have no kcal/mol
+units. Five structural samples provide pLDDT spread, not uncertainty on binding
+response. Net growth combines protein function and response under imatinib.
+
+```powershell
+# Free estimates first:
+.venv\Scripts\python scripts/boltz_benchmark.py
+# Explicit submission, with stable request keys and cache reuse:
+.venv\Scripts\python scripts/boltz_benchmark.py --run --max-total-usd 0.50
+# Analyze already downloaded coordinates, no paid calls:
+.venv\Scripts\python scripts/analyze_boltz_benchmark.py
+# Demonstrate cached benchmark reporting without network:
+.venv\Scripts\python main.py --gene ABL1 --variant T315I --offline --no-agent
+```
+
+Artifacts are ignored under `output/structures/boltz_benchmark/`: input manifest,
+per-sample metrics, results/summary JSON, structural comparison, Markdown report,
+and raw downloaded predictions. The separate historical 20-variant script is
+`scripts/boltz_panel.py`.
+
+The backend attaches completed cached controls in a separate report section
+after predictions are fixed. Lookup verifies dataset/reference hashes and the summary-to-execution-manifest
+checksum and makes no new Boltz calls. Free estimates are saved separately and
+cannot overwrite a completed execution manifest. These observations are not fed back into the ESM model.
+Structural analysis reports best-sample backbone displacement versus predicted
+wild type and minimum heavy-atom distances from residues 315/396 to the ligand;
+these are geometric descriptors, not experimental response accuracy.
+
+Best-sample structural comparison (all 271 C-alpha atoms, rigid alignment,
+no outlier trimming):
+
+| Variant | Backbone RMSD to predicted WT (A) | Site 315 to ligand (A) | Site 396 to ligand (A) |
+| --- | --- | --- | --- |
+| WT | 0.000 | 2.845 | 14.657 |
+| T315I | 0.708 | 3.080 | 15.519 |
+| T315A | 0.766 | 3.722 | 15.458 |
+| H396P | 0.782 | 2.831 | 16.161 |
+
+Similar small backbone shifts do not distinguish the high-growth mutants from
+the near-neutral control. Minimum contact distance alone also does not recover
+that distinction. The complete offline reporting path was verified for T315I
+and H396P with measured response, cached binding comparison, and geometry.

@@ -5,11 +5,10 @@
     python3 scripts/boltz_panel.py --run           # submit (asks for the total first)
 
 WHY A WILD-TYPE RUN IS IN THE PANEL. Ptarmigan-1 cannot score mutants at all,
-so drug_screen.py's mutant-minus-wildtype delta was impossible there and the
-screen is kept only as a panel control. Boltz has no such limit: we can predict
-the mutant complex AND the wild-type complex, so the delta is recoverable here.
-It is the whole point of the panel, which is why wild-type is run first and
-every mutant is reported as a delta against it.
+so the original mutant-minus-wildtype affinity screen is unsupported there.
+Boltz accepts both mutant and wild-type complexes. Comparing their binding
+confidence is possible, but this is not a measured affinity shift or a calibrated
+efficacy prediction. Keep wild type as a reference for descriptive comparisons.
 
 HOW THE PANEL WAS CHOSEN. Two requirements, both load-bearing:
 

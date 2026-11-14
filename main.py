@@ -236,6 +236,17 @@ def run(
         except (RuntimeError, ValueError, OSError, ImportError, KeyError) as exc:
             payload["skipped_stages"].append({"stage": "esm_inference", "reason": str(exc)})
 
+    # Attach controls only after numerical predictions are fixed; never use their
+    # assay labels as features or silently submit more structure jobs.
+    if accession == "P00519" and len(mutant.substitutions) == 1 and not mutant.deletions:
+        try:
+            from pipeline import benchmark
+            cached = benchmark.lookup(str(mutant.substitutions[0]))
+            if cached is not None:
+                payload["boltz_benchmark"] = cached
+        except (OSError, ValueError, KeyError) as exc:
+            payload["skipped_stages"].append({"stage": "benchmark", "reason": str(exc)})
+
     reason = "Ptarmigan supports wild-type catalog targets, not mutant binding prediction"
     payload["screen"] = {"panel": panel, "results": [], "status": "unsupported", "reason": reason}
     payload["skipped_stages"].append({"stage": "drug_screen", "reason": reason})

@@ -99,6 +99,19 @@ def render_markdown(payload: dict[str, Any]) -> str:
         for key in ("confidence", "confidence_sd", "binding_confidence", "ptm", "iptm", "crop", "num_samples", "cost_usd", "prediction_id", "path"):
             lines.append(f"- {key}: {structure.get(key)}")
         lines.append("Binding confidence is not affinity or drug efficacy.")
+    benchmark = payload.get("boltz_benchmark")
+    if benchmark:
+        lines += ["", "## Cached Boltz benchmark comparison",
+                  f"- Model: {benchmark['model']}; samples: {benchmark['num_samples']}",
+                  f"- Binding confidence: {benchmark['binding_confidence']}",
+                  f"- Difference from wild type: {benchmark['delta_binding_confidence_vs_wt']}",
+                  f"- Source prediction: {benchmark['prediction_id']}",
+                  "- Confidence differences are not affinity shifts or calibrated drug-response predictions."]
+        if benchmark.get("geometry"):
+            geometry = benchmark["geometry"]
+            lines += [f"- C-alpha RMSD to predicted WT: {geometry['ca_rmsd_to_predicted_wt_angstrom']:.3f} A",
+                      f"- Minimum heavy-atom distances to ligand: {geometry['site_min_heavy_atom_distance_to_ligand_angstrom']} A",
+                      "- These are predicted-to-predicted geometry descriptors, not experimental accuracy."]
     skipped = payload.get("skipped_stages", [])
     if skipped:
         lines += ["", "## Skipped or unsupported stages"]
