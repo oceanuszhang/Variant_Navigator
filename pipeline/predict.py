@@ -1,24 +1,15 @@
-"""Trained net-growth prediction for a single variant — the demo path.
+"""ABL1/imatinib measurement lookup, legacy held-out estimates, and runtime inference.
 
-Deliberately small. It fits the model from `scripts/train_baseline.py` on the
-full BCR-ABL screen and predicts one variant, so `main.py` can answer "what
-happens to this variant under imatinib?" with a number rather than only a
-geometric prior.
-
-Honesty carried with every prediction, because the number is modest:
-
-    r = 0.245 under position-grouped CV, which is 25% of the attainable
-    ceiling (0.978), with MAE 2.8x the replicate noise floor.
-
-So a prediction is reported with its measured accuracy attached and is useful
-for ranking, not for a clinical threshold. `measured()` short-circuits the whole
-thing when the variant is already in the screen: 4,925 variants have a real
-measurement, and a measurement beats a prediction.
+Measurements take precedence. Saved ESM test estimates are exposed separately.
+Runtime RandomForest inference does not inherit the ESM validation metrics.
 """
 
 from __future__ import annotations
 
 from typing import Any
+from pathlib import Path
+import json
+import hashlib
 
 from pipeline import dms, features
 
@@ -27,10 +18,25 @@ _MODEL: Any = None
 _SCALER: Any = None
 _MEASURED: dict[str, Any] | None = None
 
-# From scripts/train_baseline.py, 5-fold position-grouped CV.
-CV_PEARSON_R = 0.2454
-CV_MAE = 0.01955
-CEILING_R = 0.9779
+REFERENCE = Path(__file__).resolve().parents[1] / "data/cancer-exp/ABL1_NM_005157.6_DMS_reference_aa.txt"
+VALIDATION = Path(__file__).resolve().parents[1] / "output/model/validation_predictions.json"
+
+
+def held_out(mutant: str) -> dict[str, Any] | None:
+    """Return a saved test estimate, separately from assay lookup and inference."""
+    if not VALIDATION.exists():
+        return None
+    raw = VALIDATION.read_bytes()
+    artifact = json.loads(raw)
+    row = next((r for r in artifact["rows"] if r["mutant"] == mutant.upper()), None)
+    if row is None:
+        return None
+    return {**row, "kind": "held_out", "model": artifact["model"],
+            "head": artifact["head"], "seed": artifact["seed"],
+            "metrics": artifact["metrics"][artifact["head"]],
+            "artifact_sha256": hashlib.sha256(raw).hexdigest(),
+            "split": "position-held-out", "provenance_limit":
+            "Legacy artifact does not include training membership or sequence hash"}
 
 
 class PredictError(RuntimeError):
@@ -77,18 +83,31 @@ def _fit() -> tuple[Any, Any]:
 
 
 def predict_variant(
-    position: int, ref_aa: str, alt_aa: str, *, compound: str = "imatinib"
+    position: int, ref_aa: str, alt_aa: str, *, compound: str = "imatinib",
+    allow_inference: bool = True
 ) -> dict[str, Any]:
     """Predicted net growth under 1200 nM imatinib for one substitution.
 
     Higher = more drug escape. Returns the measurement instead when the variant
     is already in the screen.
     """
-    mutant = f"{ref_aa.upper()}{position}{alt_aa.upper()}"
+    ref_aa, alt_aa = ref_aa.upper(), alt_aa.upper()
+    seq = REFERENCE.read_text().strip()
+    if compound.lower() != "imatinib":
+        raise PredictError("Response model supports imatinib only")
+    if not 242 <= position <= 512:
+        raise PredictError("Response model supports ABL1 positions 242-512 only")
+    if len(ref_aa) != 1 or len(alt_aa) != 1 or ref_aa not in features.AA or alt_aa not in features.AA or ref_aa == alt_aa:
+        raise PredictError("Expected a non-synonymous standard amino-acid substitution")
+    if seq[position - 1] != ref_aa:
+        raise PredictError(f"ABL1 position {position} is {seq[position - 1]}, not {ref_aa}")
+    mutant = f"{ref_aa}{position}{alt_aa}"
     hit = measured(mutant)
     if hit:
-        return {**hit, "predicted": False, "cv_pearson_r": CV_PEARSON_R}
+        return {**hit, "predicted": False, "kind": "measurement", "compound": "imatinib", "dose_nm": 1200}
 
+    if not allow_inference:
+        raise PredictError("No measured assay value; inference disabled in offline mode")
     model, scaler = _fit()
     row = features.substitution_features(ref_aa, alt_aa) + features.position_features(
         position, compound=compound, ref=ref_aa
@@ -103,22 +122,17 @@ def predict_variant(
         "percentile_vs_screen": round(pct, 1),
         "predicted": True,
         "source": f"model (RandomForest on {len(vs)} measured variants)",
-        "cv_pearson_r": CV_PEARSON_R,
-        "cv_mae": CV_MAE,
-        "ceiling_r": CEILING_R,
-        "caveat": (
-            f"r={CV_PEARSON_R} under position-grouped CV ({CV_PEARSON_R/CEILING_R*100:.0f}% "
-            "of attainable). Useful for ranking, not as a clinical threshold."
-        ),
+        "kind": "inference",
+        "compound": "imatinib", "dose_nm": 1200,
+        "features": features.FEATURE_NAMES,
+        "validation_status": "unverified for this runtime fit",
+        "caveat": "Runtime handcrafted-feature RandomForest; ESM validation metrics do not apply. Research only.",
     }
 
 
 def available() -> bool:
-    try:
-        import sklearn  # noqa: F401
-    except ImportError:
-        return False
-    return dms.available()
+    """Assay lookup is available without optional model dependencies."""
+    return REFERENCE.exists() and dms.available()
 
 
 def _main() -> int:

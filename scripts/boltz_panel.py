@@ -46,7 +46,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from pipeline import boltz_structure as bs
 
 DMS = Path("data/datasets/abl_dms_netgrowth_1200nM.csv")
-SEQ = Path("data/esm/P00519.seq")
+SEQ = Path("data/cancer-exp/ABL1_NM_005157.6_DMS_reference_aa.txt")
 OUT = Path("output/structures/panel_results.json")
 
 # ATP-site landmarks in P00519 numbering. Wild-type structural annotation,
@@ -173,7 +173,7 @@ def main() -> int:
 
     spent = 0.0
     for i, (name, seq, note) in enumerate(jobs, 1):
-        if name in results:
+        if name in results and "error" not in results[name]:
             print(f"[{i}/{len(jobs)}] {name}: cached, skipping")
             continue
         print(f"[{i}/{len(jobs)}] {name}…", end=" ", flush=True)

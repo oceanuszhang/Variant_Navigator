@@ -20,6 +20,7 @@ TIMEOUT = 30
 # Gene name -> reviewed UniProt accession, so demo runs are deterministic
 # instead of depending on search ranking.
 KNOWN_ACCESSIONS = {
+    "ABL1": "P00519",
     "EGFR": "P00533",        # Homo sapiens epidermal growth factor receptor
     "RPOB": "P9WGY9",        # M. tuberculosis H37Rv RNA polymerase beta subunit
     # Zymoseptoria tritici sterol 14-alpha-demethylase. UniProt holds several

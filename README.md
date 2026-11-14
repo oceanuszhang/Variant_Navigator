@@ -1,890 +1,210 @@
 # VariantNavigator
 
-One pipeline that predicts **which drugs still work against a disease-causing mutation** — run against two domains with the same code:
+Cancer-only research workflow for exploring mutation effects on drug response.
+The supported targets are human **ABL1/BCR-ABL** and **EGFR**. Quantitative
+measured response and runtime modeling cover **ABL1 + imatinib only**.
+This is a research prototype, not a treatment recommender.
 
-- **Oncology:** EGFR variants vs. approved kinase inhibitors
-- **Agriculture:** CYP51 variants in wheat pathogens vs. registered fungicides
-- **Antimicrobial:** rpoB variants in *M. tuberculosis* vs. TB drug regimens
+## Implementation status (updated 2026-11-14)
 
-## Pipeline
+| Component | Status | Verification |
+| --- | --- | --- |
+| Cancer-only orchestration | Implemented | Offline ABL1 report and service-mocked tests pass |
+| Modal authentication | Verified in existing `.venv` | Read-only app listing and actual GPU job succeeded |
+| ESM2 35M GPU smoke test | Passed | Four validated variants returned a finite `(4, 480)` feature matrix |
+| Saved regression models | Implemented and smoke-tested | Both heads reload with identical held-out predictions |
+| Model provenance/loader | Verified | Nine regression tests pass, including checksum, dimension, partial-run, and optional-service guards |
+| Single-variant saved ESM inference | Passed live verification | Fresh T315I Modal embedding exactly matches saved batch prediction; separate from measured response |
+| Full 4,925-variant GPU embedding run | Passed | Finite `(4925, 480)` matrix; evaluated heads saved and reloaded successfully |
+| Boltz | Guarded optional integration | Live authentication/control run pending |
+| Literature/agent adapters | Incomplete | Deterministic reports work; evidence remains separate |
+| UI | Deferred | No UI work in this phase |
 
+## Run the backend
+
+Python 3.11+ is sufficient for the core workflow. Run from the repository root.
+
+```powershell
+python main.py --gene ABL1 --variant T315I --offline --no-agent
+python main.py --gene EGFR --variant T790M --no-agent
+python main.py --test-case all --no-agent
+python -m unittest discover -s tests -v
 ```
-gene + variant + mode
-  → fetch.py            UniProt: wildtype sequence + annotated binding site
-  → mutant.py           apply the variant, validated against the sequence
-  → esm2_score.py       ESM2 Δ log-likelihood (Modal)
-  → boltz_structure.py  mutant structure prediction (Boltz)
-  → drug_screen.py      Ptarmigan-1 binding screen across the drug panel
-  → agent_report.py     Keenable agent → report in output/reports/
-```
 
-## Quickstart
+The first command is deterministic and needs no credentials, network, GPU, or
+third-party packages. It uses the bundled 518-aa ABL1 study reference and assay
+CSV. Offline mode skips ESM, structure retrieval, Boltz, and novel inference.
+EGFR offline lookup is not supported. Invalid inputs fail explicitly.
 
-```bash
-pip install -r requirements.txt
-cp .env.example .env        # then fill in keys
+`--test-case all` runs only the oncology fixtures; completion means the workflow
+ran, not that any uncalibrated efficacy verdict passed a benchmark. Historical
+agricultural and antimicrobial data remain in the repository but are outside
+the active workflow. Other targets, modes, panels, nonhuman taxa, and numbering
+offsets are rejected by the entry point.
 
-python main.py --gene EGFR --variant T790M --mode oncology
-python main.py --test-case all          # all five controls, 3 domains
-```
+## Workflow and output contract
 
-`fetch.py` and `mutant.py` need no credentials — they run on the stdlib. Stages
-that are not wired up yet are **skipped with a note** rather than crashing, so
-`main.py` always produces a report.
+1. Resolve an explicit human accession (ABL1/P00519 or EGFR/P00533).
+2. Validate and apply the published variant at offset 0.
+3. Optionally compute an ESM2 sequence score when its dependencies are present.
+4. Optionally predict an ABL1/imatinib complex with Boltz (`--boltz`).
+5. Compute experimental reference-pocket geometry online.
+6. For single ABL1 substitutions at 242-512, return a measured assay result if
+   present; otherwise attempt the handcrafted-feature runtime model online.
+7. Attach a saved held-out ESM estimate separately when available.
+8. Write UTF-8 Markdown and JSON reports in ignored `output/reports/`.
 
-For the ESM2 and model stages, use the project venv (torch is the only heavy
-dependency, and it is optional — without it every caller skips):
+JSON includes `schema_version`, `sequence_source`, `offline`, `status`, and
+`skipped_stages`. Optional-service failures are preserved with their reasons.
+A partial report is expected when integrations are unavailable; it does not
+mean all predictive stages executed. Boltz output retains confidence, sample
+spread, binding confidence, crop, cost, and prediction ID. Binding confidence
+is not binding affinity or efficacy.
 
-```bash
+## Measurements, validation, and inference are distinct
+
+- **Measurement:** 4,925 ABL1 variants, Ba/F3 corrected net growth at 1200 nM
+  imatinib, with two replicates. Known measurements always take precedence.
+- **Saved held-out estimate:** `output/model/validation_predictions.json`
+  contains 992 variants across 54 test positions, ESM2 35M / HistGradientBoosting,
+  seed 1. MAE 0.01911, Spearman 0.2850, Pearson 0.3124; mean-baseline MAE
+  0.02080. Each attached estimate identifies its artifact SHA256, model/head,
+  seed, and metrics. The legacy artifact lacks training membership and a
+  reference-sequence hash, so those provenance claims cannot be reconstructed.
+- **Runtime inference:** `pipeline/predict.py` fits a RandomForest from
+  substitution and pocket-position features for unmeasured variants. It does
+  not use the ESM embedding head. Its current fit has no attached verified
+  validation metrics, and never borrows the ESM metrics. It is limited to
+  valid ABL1 substitutions at 242-512 under imatinib.
+
+Net growth combines protein fitness and response under drug. A low value cannot
+separate kinase loss of function from drug sensitivity. Replicate range is not
+a confidence interval. Pocket distance is a geometric descriptor, not an efficacy
+prediction; its reported correlation with measured growth is only 0.069.
+
+Data: Inam et al., *Characterizing Variants of Uncertain Drug Response (VUDRs)
+Using Quantitative Measurements at Clinical Exposures*;
+[public MIT-licensed source](https://github.com/pritchardlabatpsu/abl_dms).
+See `data/datasets/SCHEMA.md` for measurement conventions. Preserve censored
+bounds and exclude censored values from exact-error metrics.
+
+## Optional dependencies and sponsor tools
+
+```powershell
 python -m venv .venv
-.venv/bin/python -m pip install torch fair-esm numpy scikit-learn
-
-.venv/bin/python -m pipeline.esm2_score                            # cache marginals
-.venv/bin/python scripts/train_baseline.py --esm esm2_t12_35M_UR50D  # the ladder
-python main.py --gene P00519 --variant G250L --mode oncology       # one variant
+.venv\Scripts\python -m pip install torch fair-esm numpy scikit-learn
+# Modal GPU scripts only:
+.venv\Scripts\python -m pip install modal
 ```
 
-## Status
+Copy `.env.example` to `.env` for optional credentials. Never commit keys.
+Boltz uses its own `boltz-api` CLI and OAuth session, not Modal tokens.
 
-| Module | State |
+| Tool | Actual role and integration state |
 | --- | --- |
-| `fetch.py` | **Working** — tested against UniProt live |
-| `mutant.py` | **Working** — subs (1- and 3-letter), multi-variant, in-frame del |
-| `main.py` | **Working** — 6 stages, end-to-end with graceful stage skipping |
-| `pocket.py` | **Working** — 13/13 reference checks pass on biological assemblies |
-| `dms.py` | **Working** — 4,925 measured BCR-ABL variants, fetched and cached |
-| `baseline.py` | **Working** — the only predictive stage that needs no credentials |
-| `evidence.py` | **Working** — Paperclip returns live PMC citations |
-| `data/drug_panels/` | **Working** — 11 oncology + 12 fungicide + 13 antibiotic drugs, SMILES from PubChem |
-| `esm2_score.py` | **Working** — ESM2 masked marginals, local on MPS, cached |
-| `features.py` | **Working** — substitution / position / ESM blocks, ablatable |
-| `predict.py` | **Working** — measurement when known, model otherwise |
-| `boltz_structure.py` | **Working** — Boltz-2.1 structure + binding via the `boltz-api` CLI, kinase crop 242–512, 5 samples, free cost preflight on every call |
-| `drug_screen.py` | Stub — **cannot be built as designed**: Ptarmigan screens wild-type only |
-| `agent_report.py` | **Working** — deterministic renderer produces a complete report; the agent rewrite (Nebius) is optional |
+| Modal | GPU embedding script: `scripts/modal_esm.py`; no HTTP backend or deployment yet |
+| Boltz | ABL1 kinase crop 242-512 plus imatinib; explicitly enable with `--boltz`; free cost estimate and `VN_BOLTZ_MAX_USD` per-call cap (default $0.25) |
+| Ptarmigan | Saved wild-type screens in `output/ptarmigan/`; catalog-only service cannot score mutant sequences; mutant screen explicitly unsupported |
+| Paperclip | Separate optional literature module `pipeline/evidence.py`; not automatically invoked or fed into prediction |
+| Keenable | Report-agent integration remains unimplemented; local deterministic reports work |
+| Nebius / Genomic Intelligence | Not implemented in the workflow |
 
-## Data sources and structure
+Boltz availability, budget rejection, timeout, and crop errors are recorded as
+skips, allowing reporting to continue. The wrapper is never invoked for EGFR
+or variants outside its validated crop. Budget caps are per call, not a total
+account spending limit. Live services have not been verified by offline tests. The Boltz panel script
+uses the bundled study reference and retries entries previously marked as errors.
 
-Every accession, CID and offset below was verified live against the source API,
-not copied from the plan doc.
+## Project layout
 
-### Targets (`data/targets.json`)
+- `main.py`: cancer-only orchestration and CLI.
+- `pipeline/`: sequence retrieval, variants, assay lookup/modeling, ESM, geometry,
+  Boltz, reporting, and separate literature evidence.
+- `scripts/`: offline embedding/training, Modal GPU work, Boltz panel, figures.
+- `data/`: targets, study reference, assay data, compounds, controls.
+- `output/model/`: checked-in legacy validation artifact; new generated output
+  remains ignored.
+- `tests/`: deterministic service-mocked workflow tests (also pytest-compatible).
+- `ui/`: separate prototype; UI work is currently deferred.
 
-| | Experiment 1 | Experiment 2 |
-| --- | --- | --- |
-| Target | Human EGFR | Rice ALS1 |
-| UniProt | `P00533` (1210 aa) | `Q6K2E8` (644 aa) |
-| Organism | *Homo sapiens* | *Oryza sativa*, weedy accessions |
-| Pocket structures | PDB `1M17`, `4ZAU` | PDB `1Z8N`, `1YHZ` (*Arabidopsis*) |
-| Assay | Ba/F3 cell viability IC₅₀ | fresh shoot biomass GR₅₀, 21 d |
-| Reference | wild-type EGFR | IRGA417 susceptible cultivar |
-| Compounds | erlotinib, osimertinib | imazethapyr, nicosulfuron |
-| Numbering offset | 0 | **−26** |
+## Remaining backend work
 
-### ⚠ The ALS numbering offset will silently corrupt Experiment 2
+- Improve and independently validate the full-dataset ESM model; its current
+  held-out performance is modest and it misses resistant T315 substitutions.
+  Persistence and provenance are implemented; smoke artifacts are guarded.
+- Evaluate the runtime RandomForest reproducibly before attaching accuracy claims.
+- Validate Boltz results against measured controls; do not turn confidence into
+  drug work/fail calls or apply placeholder affinity thresholds.
+- Connect literature evidence after predictions are fixed, and implement an
+  optional report rewrite only if needed. Deterministic reporting is supported.
+- Add a service/API and deployment when the workflow contract is ready.
+- Add more cancer targets and drug conditions only with matching datasets and
+  target-specific sequence/structure configuration.
 
-The ALS resistance literature numbers variants in **Arabidopsis** convention
-(A122, W574, S653). Rice ALS1 is 26 residues shorter. Checked against the real
-sequences:
+## Modal smoke test and persisted ESM models
 
-| Published | *Arabidopsis* `P17597` | Rice `Q6K2E8` | Rice, renumbered −26 |
-| --- | --- | --- | --- |
-| A122 | A ✓ | **A ✓ (coincidence)** | A96 ✓ |
-| W574 | W ✓ | D ✗ | W548 ✓ |
-| S653 | S ✓ | past 644-aa end ✗ | S627 ✓ |
+Use the existing `.venv` and Modal CLI authentication. GPU dependencies are
+installed in the remote image; local training needs NumPy and scikit-learn.
+On Windows, set UTF-8 output before invoking Modal:
 
-**A122 is alanine in both numbering systems by accident.** A122T is the headline
-live demo case, so it would validate fine while every other site was quietly
-wrong — the worst kind of bug, because the demo passes. W548L and S627I are the
-documented rice ALS resistance substitutions, which is the independent check
-that −26 is right.
-
-`mutant.apply_variant(..., offset=-26)` handles this, and
-`strict=True` refuses rather than guessing when a residue disagrees. Genotypes
-stay in published numbering in the CSVs so transcription remains checkable
-against the paper; renumbering happens in code.
-
-### Compounds (`data/compounds/compounds.json`)
-
-SMILES resolved from **PubChem PUG REST** (no key, no licence friction):
-erlotinib `CID 176870`, osimertinib `CID 71496458`, imazethapyr `CID 54740`,
-nicosulfuron `CID 73281`.
-
-### Measured response data — **the blocker is gone: Experiment 3**
-
-The original plan needed two files hand-transcribed from published figures
-(`egfr_ic50.csv`, `rice_gr50.csv`). Nothing downstream of feature extraction
-could run until they existed, and no API key could supply them.
-
-**That is resolved.** Experiment 3 uses a public, MIT-licensed deep mutational
-scanning dataset that is fetched programmatically and is ~1000× larger than
-what the transcription would have produced:
-
-| | Experiment 3 |
-| --- | --- |
-| Target | Human ABL1 (BCR-ABL) kinase domain, residues 242–512 |
-| UniProt | `P00519` (1130 aa) |
-| Compound | imatinib (PubChem `CID 5291`) |
-| Assay | **Ba/F3 net growth rate** at 1200 nM imatinib, 6 d, TileSeq + duplex seq |
-| Measured variants | **4,925**, each with 2 replicates |
-| Pocket structure | PDB `1IEP` (ligand `STI`), offset `0` |
-| Numbering offset | 0 — verified, see below |
-| Source | [pritchardlabatpsu/abl_dms](https://github.com/pritchardlabatpsu/abl_dms) (MIT) |
-
-> Inam H.\*, Tomaszkiewicz M.\*, Reynolds J.A., Yang Z., Leighow S.M.,
-> Pritchard J.R. *Characterizing Variants of Uncertain Drug Response (VUDRs)
-> Using Quantitative Measurements at Clinical Exposures.* (\*equal contribution)
-
-It is the same **Ba/F3 assay system** as Experiment 1, so the schema carries
-over. `pipeline/dms.py` fetches, caches and validates it:
-
-```bash
-python -m pipeline.dms
+```powershell
+$env:PYTHONUTF8 = '1'
+.venv\Scripts\python -m modal run scripts/modal_esm.py --limit 4 --batch 2
+.venv\Scripts\python scripts/train_embeddings.py --npz data/esm/P00519_esm2_t12_35M_UR50D_study518_mutdiff_n4.npz --allow-partial --out-dir output/model/smoke --seed 1
 ```
 
-Richer tables from the same source, not yet wired: per-variant IC₅₀s fitted
-across 300/600/1200 nM (`Figure_3D/all_mutants_with_IC50_estimates.csv`) and
-resistance calls at three clinical doses (`Figure_4C/`). The IC₅₀ table is the
-closer match to the original log₂(dose ratio) target and is the natural next
-step.
-
-#### A fourth numbering system, and it has a trap too
-
-ABL1 has two conventions: **ABL1a**, where the gatekeeper is Thr315, and
-**ABL1b**, which is 19 residues longer so the same residue is 334. Checked
-against the real sequences and structures rather than assumed:
-
-| Source | Convention | Offset to ABL1a |
-| --- | --- | --- |
-| The DMS dataset | ABL1a | 0 |
-| UniProt `P00519` (1130 aa) | ABL1a | **0** — verified at T315/Y253/E255/G250/M351/H396 |
-| PDB `1IEP`, `2HYY` | ABL1a | 0 |
-| PDB `1OPJ` | ABL1b | **+19** |
-
-`1OPJ` carries the *same* imatinib ligand (`STI`) as `1IEP`, so substituting it
-looks harmless and silently returns the wrong residue's distance. The initial
-guess here was that UniProt would need `+19`; the sequence check proved it needs
-`0`. **Guessing the offset would have corrupted all 4,925 rows.**
-
-### What the measured data taught us
-
-Having real labels immediately falsified the headline baseline. Against all
-4,665 variants with both a measurement and a structure:
-
-| Metric | Value |
-| --- | --- |
-| Pearson *r* (pocket distance vs. net growth) | **+0.069** |
-| Replicate *r* (the noise floor) | 0.916 |
-| Attenuated *r* ceiling (best a perfect model could score) | **0.978** |
-| Replicate MAE | 0.0069 |
-
-**Pocket distance alone is not predictive.** On four hand-picked EGFR control
-cells it looked like 3/4; on 4,665 real measurements it explains under 0.5% of
-the variance. Both facts are true, and the second one is the one that counts.
-This is the clearest argument in the repo for benchmarking against measured data
-rather than curated anecdotes.
-
-The reason is visible in the most-resistant variants:
-
-```
-F359A  netgrowth=+0.0699  dist= 4.08 A     contacts the drug
-H396P  netgrowth=+0.0488  dist=15.54 A     15 A away and still resistant
-T315L  netgrowth=+0.0481  dist= 2.88 A     the gatekeeper
-```
-
-`H396` sits in the activation loop and escapes imatinib **allosterically**, by
-shifting the kinase to a conformation imatinib cannot bind. Geometry cannot see
-a mechanism that does not touch the ligand.
-
-Two further facts that constrain any model built on this data:
-
-- **59% of the response spread is *within* a single position.** So a feature
-  that is constant across a position — distance, burial, conservation — is
-  mathematically incapable of explaining most of the variance. The substitution
-  identity has to carry it.
-- **The response confounds two mechanisms.** Ba/F3 cells here depend on BCR-ABL
-  to survive, so net growth falls both when the kinase is *broken* and when the
-  drug *works*. A single scalar cannot separate "kinase dead" from "drug
-  evaded", and the two have opposite clinical meaning.
-
-## Implementation plan vs. what was built
-
-The plan this section traces, step by step, with every deviation named. Three
-were deliberate and one is outstanding.
-
-| Plan step | Status | Where |
-| --- | --- | --- |
-| Load the 4,925 variants | ✅ | `pipeline/dms.py` |
-| Target = `netgrowth_mean_corrected` | ✅ | `dms.RESPONSE` |
-| Construct mutants from the **518-aa** ABL1 reference | ⚠️ **changed** | Used full P00519 (1130 aa) for ESM *context*; the 518-mer is numerically fine — see below |
-| ESM-2 35M over reference + mutant sequences | ✅ | `scripts/embed_variants.py` |
-| Embedding at the mutated residue | ✅ | `h[i]`, never a pooled mean |
-| Feature = mutant − reference | ✅ | mean \|feature\| = 0.139 |
-| One **480-dim** vector per variant | ✅ | `X = (4925, 480)` |
-| …**on Modal** | ⚠️ **partly** | Modal path built + smoke-tested; the 4,925 run was local on MPS |
-| 80/20 split | ✅ | `scripts/train_embeddings.py` |
-| Group by `protein_start` | ✅ | asserted, 0 shared positions |
-| Fixed random seed | ✅ | `--seed`, default 0 |
-| Ridge regression head | ✅ | `RidgeCV` |
-| **XGBoost** head | ⚠️ **substituted** | sklearn `HistGradientBoostingRegressor` — see below |
-| MAE + Spearman | ✅ | both reported |
-| In-range vs `netgr_corr_rep1/2.high` | ✅ | with the interval width printed beside it |
-| % predicted in range | ✅ | 12.8% at seed 1 |
-| Predicted-vs-measured scatterplot | ✅ | `figures/predicted_vs_measured.svg` |
-| Table: measured, predicted, error, in-range | ✅ | `output/model/validation_predictions.json` |
-| Highlight **T315I** + best/worst | ✅ | needed `--seed 1`; see below |
-
-### The three deviations, and why
-
-**518-aa reference → full-length P00519 — reverted, the 518-mer wins.**
-
-An earlier version of this README claimed the 518-aa reference would mutate the
-wrong residue in every row. **That was wrong twice over, and both errors are
-corrected here.**
-
-*First, it is numerically correct.* The 518-mer is the study reference shipped as
-`data/cancer-exp/ABL1_NM_005157.6_DMS_reference_aa.txt` (transcript
-`NM_005157.6`). It differs from UniProt P00519 **only at residues 1-27**, the
-alternative ABL1 N-terminus, and is identical from residue 28 onward:
-
-```
-positions differing from P00519 : 24, all within residues 1-27
-identical from residue 28 onward : True
-DMS range 242-512 identical      : True
-DMS positions disagreeing        : 0 of 270
-```
-
-*Second, it performs better.* Same split, same seed, same model - the only
-difference is the reference:
-
-| metric (seed 1, `hist_gbm`) | full context 1-1022 | **518-aa study reference** |
-| --- | --- | --- |
-| Spearman | 0.2602 | **0.2850** |
-| Pearson | 0.2878 | **0.3124** |
-| MAE | 0.01924 | **0.01911** |
-| in-range | 11.9% | 11.5% |
-
-So the longer sequence was not just unnecessary, it was slightly worse on three
-of four metrics. Plausibly the full-length protein adds long disordered regions
-outside the kinase domain that dilute the representation at the mutated residue
-rather than informing it - but that is a hypothesis, and the measurement is the
-point. **The study reference is the right default**, and
-`scripts/embed_variants.py --crop-end 518` reproduces it.
-
-The guard still earns its place for the general case: `embed_variants.py`
-validates every variant against the reference residue before spending compute
-and refuses the run on a mismatch. It is what would catch a genuinely
-mis-anchored construct - which this one was not.
-
-
-**XGBoost → sklearn HistGradientBoosting.** Equivalent algorithm, already
-installed, no new dependency. It also lost to ridge at every rung of the earlier
-ablation, so the choice of booster was not the deciding factor. Say the word and
-`pip install xgboost` takes a minute.
-
-**Modal for the production run.** `scripts/modal_esm.py` exists, is
-authenticated and is smoke-tested end to end on an A10G with a persistent
-weights Volume — but the 4,925-variant set was embedded locally on MPS, which
-finished first. Modal's real value is the **650M** model, which is impractical
-locally.
-
-### T315I needed seed 1, and the result is the best evidence in the project
-
-Seed 0 placed position 315 in the *training* half, so the demo could not show
-it. Seed 1 holds out all 19 T315 substitutions. Splitting them by measured
-phenotype:
-
-| held-out T315 substitutions | n | mean \|error\| |
-| --- | --- | --- |
-| **tolerated** (measured ≤ +0.02) | 11 | **0.011** |
-| **resistant** (measured > +0.02) | 8 | **0.070** — 6.1× worse |
-
-```
-T315S  measured=-0.00681  predicted=-0.00628  err=+0.00053   IN RANGE
-T315W  measured=-0.02951  predicted=-0.03346  err=-0.00394   IN RANGE
-...
-T315I  measured=+0.04599  predicted=-0.02844  err=-0.07443
-T315L  measured=+0.04809  predicted=-0.02245  err=-0.07054
-T315V  measured=+0.04518  predicted=-0.01802  err=-0.06320
-```
-
-Every non-resistant substitution at the gatekeeper is predicted approximately
-right; **every resistant one is catastrophically wrong.** T315I is the single
-most clinically important imatinib-resistance mutation in CML, and the model
-places it *below* the population mean.
-
-That is not noise, it is the thesis. These features answer *"is this
-substitution plausible here?"* — which they do well, because substitutions with
-negative phenotype at 315 are mostly loss of kinase function, and conservation
-predicts that. They do not answer *"does imatinib still bind?"*, which is the
-entire question at a gatekeeper residue.
-
-## Sponsor tools — status at a glance
-
-Every row was verified by **running** the tool, not by reading its landing page.
-Where a tool could not do what we wanted, that is recorded as the finding.
-
-| Sponsor tool | Status | What it did here | Evidence in repo |
-| --- | --- | --- | --- |
-| **Talus Bio Ptarmigan-1** | ✅ **used** | 2 compound→target screens, $0.06. **Cannot score mutants** — the finding | `output/ptarmigan/*.json` |
-| **Modal** | ✅ **used** | Full 4,925-variant ESM-2 run on an A10G, weights in a persistent Volume | `scripts/modal_esm.py` |
-| **Boltz** | ✅ **used** | Structure + binding, cost-estimated before every call, capped at `VN_BOLTZ_MAX_USD` | `pipeline/boltz_structure.py`, `scripts/boltz_panel.py` |
-| **Keenable** | ⏳ connected | MCP server ✔ Connected and key accepted; **tools need a Claude Code restart to load** | `~/.claude.json`, `CLAUDE.md` rule |
-| **Genomic Intelligence** | ⏳ awaiting key | `.env` placeholder wired | `.env.example` |
-| **Raycaster** | ❌ not used | No integration identified | — |
-| **Biobase** | ❌ not used | Prize is for contributed evaluation questions, not a tool call | — |
-
-Non-sponsor tools that carry real weight, for completeness:
-
-| Tool | Status | What it did |
-| --- | --- | --- |
-| **ESM-2** (`fair-esm`) | ✅ | The single most valuable feature block — r 0.245 → **0.3315** |
-| **Paperclip** | ✅ | Live PMC citations; was silently broken and fixed (`/opt` interpreter discovery) |
-| **UniProt / PubChem / RCSB PDB** | ✅ | Sequences, SMILES, biological assemblies — all keyless |
-| **scikit-learn** | ✅ | Ridge / HistGBM / RandomForest + the CV harness |
-
-### Where the sponsor credit actually went
-
-| | |
-| --- | --- |
-| Ptarmigan-1 | **$0.06** of $2,750 — the $2,500 DNAForge grant expires **2026-11-15 08:00 UTC** |
-| Modal | One full 4,925-variant A10G run + smoke tests |
-| Boltz | Estimated, not yet spent beyond the panel; `estimate-cost` is free |
-
-### Boltz costs — measured, not guessed
-
-`estimate-cost` is free, so it runs before every submission and
-`boltz_structure.predict_structure()` refuses to exceed `VN_BOLTZ_MAX_USD`
-(default $0.25/call). Measured 2026-11-14 against `boltz-2.1`:
-
-| request | cost |
-| --- | --- |
-| full-length P00519 (1130 aa) + imatinib, 1 sample | $0.20 |
-| kinase crop 242–512 (271 aa) + imatinib, 1 sample | $0.05 |
-| kinase crop, **5 samples** | **$0.10** |
-| kinase crop, 10 samples | $0.20 |
-
-Three counter-intuitive findings, each of which changes the right design:
-
-- **Binding metrics are free.** Structure-only and structure+affinity cost the
-  same, so always request `binding`.
-- **5 samples cost the same as 3**, hitting the per-unit floor. Use 5 and report
-  the spread; 1 sample gives no spread to report.
-- **There is a $0.05 floor**, so the published "0–256 aa → $0.025" tier is
-  unreachable and there is **no cost reason to shave the crop**. Shaving it is
-  what breaks coverage: the DMS spans 242–512 while 1IEP resolves only 225–498,
-  so cropping to the structure would silently drop 14 measured positions to save
-  nothing.
-
-`admin:usage` returns 401 under the OAuth session, so the CLI cannot show a
-Boltz balance — budget from estimates, not a balance.
-
-### Why Boltz can do what Ptarmigan could not
-
-Ptarmigan screens wild-type catalog proteins only, so a mutant-minus-wildtype
-delta is impossible there. Boltz has no such limit: it predicts the mutant
-complex *and* the wild-type complex, so the delta is recoverable. That is the
-whole point of `scripts/boltz_panel.py`, which runs wild-type first and reports
-every mutant as a delta against it.
-
-The 20-variant panel is chosen so the result can be scored rather than admired:
-every variant is **measured** in the DMS, and the panel spans the full measured
-range (−0.062 to +0.049) with 14 resistant, 3 near-neutral and 3 kinase-dead —
-a panel of resistance mutations alone would sit at one extreme and look good for
-the wrong reason. It deliberately includes all five variants the embeddings got
-**worst** (G250S, G250A, G250E, L248C, L273N), measured near +0.04 and predicted
-near the population mean. Whether pocket geometry recovers them is the most
-informative result this panel can produce.
-
-
-### Ptarmigan-1 cannot score mutants, and that is structural
-
-Their documentation is explicit:
-
-> *"Only the human proteins listed there can be screened; there is no way to add
-> one."*
-
-Confirmed against the live API: EGFR returns exactly one entry,
-`uniprot_accession: P00533` — canonical wild-type, no variant field. So
-`drug_screen.py`'s design, `screen_panel(gene, variant, wt_sequence,
-mt_sequence, …)` → mutant-minus-wildtype delta, is **unimplementable**. T790M and
-wild-type EGFR return identical results, making the delta structurally zero.
-The API key was never the blocker; the API shape is.
-
-What it *can* do, it did well — as a **panel-design control**:
-
-| | ABL1 screen | EGFR screen |
-| --- | --- | --- |
-| **imatinib** | **#1** of 12 (0.5572) | **#12** of 12 (0.4744) |
-| **brigatinib** (off-target control) | **#12** (0.4876) | #11 (0.5139) |
-
-Imatinib tops the ABL1 screen and comes last on EGFR; the deliberately planted
-off-target control sinks on both. One prediction is genuinely sharp —
-neratinib peaks at residue **797C**, the real covalent anchor for EGFR
-inhibitors, and erlotinib/gefitinib/icotinib cluster at **744** in the ATP site.
-
-Two caveats kept attached to that data in `output/ptarmigan/`:
-
-- **Narrow dynamic range.** 0.4876–0.5572 (ABL1), 0.4744–0.5850 (EGFR), all near
-  0.5, and their docs warn against reading 0.5 as a cutoff. The *ranking*
-  carries the signal; the absolute values do not. Both targets also exceed the
-  model's 766-residue training length, so both are flagged out-of-distribution.
-- **Peak residues are about half wrong.** Only 8/12 (ABL1) and 6/12 (EGFR) land
-  inside the kinase domain. `gefitinib → 99W` on ABL1 and `dacomitinib → 535C`
-  in the EGFR *extracellular* domain are not credible sites.
-
-### Modal: what it is for here
-
-The 35M model runs fine on local MPS and produced the headline numbers. Modal
-earns its place on the **650M** model, a 2.5 GB download that stalled twice on
-local wifi: on Modal the weights persist in a Volume and the passes run on an
-A10G.
-
-```bash
-/opt/anaconda3/bin/modal run scripts/modal_esm.py                      # 650M
-/opt/anaconda3/bin/modal run scripts/modal_esm.py --model esm2_t12_35M_UR50D
-```
-
-`modal` is installed only under `/opt/anaconda3` (Python 3.13), not the venv —
-see "Environment gotchas".
-
-## Two ways to use ESM-2, and why both exist
-
-| | Masked marginals | Mutant-marginal difference |
-| --- | --- | --- |
-| Feature | `log P(alt) − log P(ref)` at masked *i* | `h_mut[i] − h_ref[i]` |
-| Dimensions | 5 | 480 (35M) / 1280 (650M) |
-| Forward passes | **271** (one per position) | **4,926** (one per variant) |
-| Best result | **r = 0.3315** (combined) | Spearman **0.195** |
-| Wired into `main.py` | ✅ **yes** | ❌ no — it lost |
-| Script | `pipeline/esm2_score.py` | `scripts/embed_variants.py` |
-
-### The embedding approach lost, and the reason is mechanistic
-
-Worth recording so nobody repeats it. 4,925 variants embedded, 480-dim
-differences, 80/20 position-grouped split (3,928 train / 997 test, 216 / 54
-positions, zero shared):
-
-| head | MAE | Spearman | Pearson | in-range |
+The Modal default is ESM2 35M with the bundled 518-aa study reference. Limited
+runs sample across the dataset and use distinct filenames; they do not replace
+full feature artifacts. The script checks residue identity before GPU submission
+and checks output dimensions and finiteness before writing.
+
+Training writes `ridge.joblib`, `hist_gbm.joblib`, `manifest.json`, and
+`validation_predictions.json` into the chosen output directory. It reloads each
+model and verifies identical held-out predictions. The manifest records the
+feature recipe, sequence/dataset/feature hashes, reference and crop, model
+parameters, software versions, exact split membership, replicate count, and
+head-specific metrics. The deployed head is preselected with `--head`, never
+chosen by its test performance. Spearman handles tied ranks.
+
+`pipeline.embedding_model.predict_embedding` loads a **trusted local** run and
+checks its feature contract, dimensions, checksum, and sklearn version. Joblib
+is executable serialization; never load untrusted models. Smoke models require
+an explicit `allow_partial=True` override. This function consumes an embedding;
+it does not automatically submit GPU jobs. `embedding_model.predict_variant`
+validates a trusted run before requesting one Modal embedding. The CLI exposes
+this as `--esm-run-dir output/model/abl1-study518-seed1`; the resulting
+`esm_prediction` is separate from measured response, with explicit train/test/
+unseen position membership. It never labels a training prediction as held out. Four-row smoke metrics have no scientific
+validation value. Full training should use a new output directory and omit
+`--allow-partial`; keep generated artifacts and credentials out of Git.
+
+### Latest full model run
+
+`output/model/abl1-study518-seed1` contains the new locally generated run:
+4,925 variants; 3,933 training rows at 216 positions and 992 test rows at 54
+positions; zero shared positions. ESM2 35M, actual bundled study reference
+(518 aa), preselected HistGradientBoosting head, seed 1.
+
+| Head | MAE | Spearman | Pearson | Within replicate range |
 | --- | --- | --- | --- | --- |
-| ridge | 0.01968 | 0.1178 | 0.1033 | 10.5% |
-| hist_gbm | **0.01913** | **0.1947** | 0.1714 | 11.0% |
-| predict-the-mean | 0.01938 | 0.0000 | 0.0000 | — |
+| Ridge | 0.01978 | 0.2168 | 0.2172 | 10.8% |
+| HistGradientBoosting | 0.01926 | 0.2681 | 0.2989 | 11.7% |
+| Training-mean baseline | 0.02080 | ? | ? | ? |
 
-**480 dimensions and 4,926 forward passes barely beat predicting the training
-mean** (MAE 0.01913 vs 0.01938), and lost clearly to the 5-feature masked
-marginal. More capacity did not help: 480 features against 3,928 rows overfits,
-and local embedding context does not carry the evolutionary-likelihood signal
-the masked marginal reads directly.
+These are a new run's results, separate from the legacy checked-in artifact.
+Do not mix their metrics or predictions. The full manifest records the exact
+reference, feature/dataset hashes, package versions, and saved head checksums.
+T315I remains a failure case: measured +0.04599 versus held-out estimate
+approximately -0.02466. Saving the model does not solve its scientific limits.
+Generated full models/features are ignored, not committed; reproduce them with:
 
-The failure is not numerical. **Every one of the five worst predictions is a
-P-loop resistance mutation:**
-
-```
-G250S  measured=+0.04027  predicted=-0.02991
-G250A  measured=+0.03884  predicted=-0.02843
-L248C  measured=+0.04221  predicted=-0.02427
-G250E  measured=+0.04276  predicted=-0.02311
-L273N  measured=+0.04174  predicted=-0.02353
+```powershell
+$env:PYTHONUTF8 = '1'
+.venv\Scripts\python -m modal run scripts/modal_esm.py --batch 8
+.venv\Scripts\python scripts/train_embeddings.py --npz data/esm/P00519_esm2_t12_35M_UR50D_study518_mutdiff.npz --out-dir output/model/abl1-study518-seed1 --seed 1 --head hist_gbm
+.venv\Scripts\python main.py --gene ABL1 --variant T315I --esm-run-dir output/model/abl1-study518-seed1 --no-agent
 ```
 
-The model places **the most resistant variants at the population mean.**
-Embeddings describe what a substitution did to the local sequence; they do not
-know that imatinib stopped binding. The best predictions, by contrast, are
-unremarkable substitutions already near the mean — where being approximately
-right is easy.
-
-In-range sits at 10–11% against a replicate interval of mean width 0.00689
-while the response spans ~0.12. That is the honest reading of the metric: the
-model is nowhere near the precision of repeating the experiment.
-
-![predicted vs measured](figures/predicted_vs_measured.svg)
-
-Both read **one residue**, never a pooled mean. That is the whole trick: all
-4,925 variants are the same protein at 99.82% sequence identity, so a
-mean-pooled whole-sequence embedding returns a near-identical vector for every
-one of them and a model fit on it has nothing to separate. Subtracting the
-reference removes whatever is constant across a position's ~19 substitutions,
-leaving the substitution's own effect (measured mean `|feature|` = 0.139).
-
-### Evaluation protocol for the embedding heads
-
-```bash
-.venv/bin/python scripts/embed_variants.py              # one-off, cached
-.venv/bin/python scripts/train_embeddings.py            # ridge + hist_gbm
-```
-
-80/20 split **grouped by residue position**, fixed seed, asserting zero shared
-positions rather than trusting it. Reported: MAE, Spearman, Pearson, and an
-**in-range** metric — the share of validation variants whose prediction lands
-between that variant's two corrected replicates.
-
-**Read in-range carefully.** The replicate interval has a mean width of 0.0069
-against a response spanning ~0.12, so landing inside it is a demanding test. A
-low percentage means the model is not yet as precise as repeating the
-experiment, not that it is broken. The width is printed next to it so the two
-are never confused.
-
-### Numbering: verified, not guessed
-
-Four conventions are in play across this repo (clinical EGFR, Arabidopsis ALS,
-ABL1a/1b, rpoB +6) and three of them would fail silently. For ABL1 the offsets
-were checked against the real sequences rather than assumed:
-
-| Source | Agrees with the DMS numbering |
-| --- | --- |
-| Study reference `NM_005157.6` (518 aa) | ✅ offset 0, 270/270 positions |
-| UniProt `P00519` (1130 aa) | ✅ offset 0, verified at 6 residues |
-| PDB `1IEP`, `2HYY` | ✅ offset 0 |
-| PDB `1OPJ` | ❌ **offset +19** |
-
-`1OPJ` carries the *same* imatinib ligand (`STI`) as `1IEP`, so substituting it
-looks harmless and silently returns the wrong residue's distance. That is the
-trap in this family, and it is why `pocket.py` validates residue identity on
-every lookup and `embed_variants.py` refuses a run whose reference disagrees.
-
-A worked example of the cost of guessing: the initial assumption here was that
-UniProt would need `+19` relative to the DMS. The sequence check proved it needs
-`0`. Had that gone unchecked, all 4,925 rows would have been scored at the wrong
-residue.
-
-
-## The model — exactly what it is
-
-### One sentence
-
-A **ridge regression** on 32 features — 23 substitution-chemistry, 4
-pocket-geometry and 5 **ESM2 masked-marginal** — predicting Ba/F3 net growth
-under 1200 nM imatinib, trained on 4,925 measured BCR-ABL variants and
-evaluated by **position-grouped** 5-fold cross-validation.
-
-```bash
-# the honest evaluation ladder
-.venv/bin/python scripts/train_baseline.py --esm esm2_t12_35M_UR50D
-
-# one variant, end to end
-python main.py --gene P00519 --variant G250L --mode oncology
-```
-
-### Results
-
-5-fold position-grouped CV, pooled out-of-fold, ESM2-35M:
-
-| features | model | r | Spearman | MAE | n feats |
-| --- | --- | --- | --- | --- | --- |
-| global mean | — | −0.078 | −0.072 | 0.0207 | — |
-| position only | hist_gbm | 0.108 | 0.139 | 0.0206 | 4 |
-| substitution only | ridge | 0.233 | 0.243 | 0.0196 | 23 |
-| all (no ESM) | random_forest | 0.245 | 0.238 | 0.0196 | 27 |
-| **ESM only** | ridge | **0.291** | 0.293 | 0.0192 | **5** |
-| substitution + ESM | ridge | 0.331 | 0.342 | 0.0188 | 28 |
-| **all + ESM** | **ridge** | **0.3315** | **0.339** | **0.0189** | 32 |
-
-Reported against the **attenuated ceiling of r = 0.978**, not against 1.0: with
-two noisy replicates (replicate r = 0.916), no model can exceed that. So
-**0.3315 is 34% of attainable**, at MAE 2.7× the replicate noise floor.
-
-### Three findings from the ladder
-
-1. **ESM2 alone, 5 features, beats all 27 hand-engineered features combined**
-   (0.291 vs 0.245). It is the single most valuable block.
-2. **Pocket geometry contributes almost nothing.** 0.233 → 0.2345 when added to
-   substitution chemistry, and 0.3312 → 0.3315 when added on top of ESM. Three
-   decimal places of nothing. Distance alone against all 4,665 structurally
-   covered variants is **r = 0.069**.
-3. **Ridge beats gradient boosting and random forest at every rung.** With 4,925
-   rows and ~32 features the relationship is close to linear, and the extra
-   capacity only fits noise. XGBoost was deliberately not installed — sklearn's
-   `HistGradientBoostingRegressor` was already present and lost anyway.
-
-### Why ESM2 is used as masked marginals, not embeddings
-
-Every variant is the same protein, so any two mutant sequences are **99.82%
-identical**. A mean-pooled whole-sequence embedding returns a nearly identical
-vector for all 4,925 variants and a model fit on it has nothing to separate.
-Instead, per ESM-1v, we mask the position and read the model's own distribution:
-
-```
-score(ref → alt at i) = log P(alt | x masked at i) − log P(ref | x masked at i)
-```
-
-One forward pass per **position** (271), not per variant, covering all 4,925
-variants. Five features come out: `delta_ll` and `ll_alt` vary per substitution,
-while `ll_ref` and `entropy` are position-level conservation measures, plus a
-`has_esm` flag so unscored positions are a declared gap rather than a silent 0.
-
-**Length limit, which bites here.** ESM2 has 1024 position embeddings and ABL1
-P00519 is 1130 aa, so the full sequence will not fit. We crop to residues
-**1–1022**, which still contains the whole kinase domain (242–512) with ~240
-residues of leading context. The crop is recorded in the cache key, so scores
-can never be silently compared across different crops.
-
-### ESM2 measures conservation, not resistance
-
-Worth internalising before trusting it. The masked-marginal scores for known
-imatinib-resistance mutations:
-
-```
-T315I   delta_ll = -2.901      the classic gatekeeper escape
-Y253H   delta_ll = -4.354
-M351T   delta_ll = -8.430
-H396R   delta_ll = +1.023
-G250E   delta_ll = +2.776
-```
-
-ESM calls the most famous resistance mutations **unlikely**, because those sites
-are conserved. It is scoring evolutionary plausibility, not drug escape. It still
-helps a great deal, and the reason is mechanistic: Ba/F3 cells here **depend on
-BCR-ABL to survive**, so net growth falls when the kinase is broken and rises
-when the drug is evaded. ESM predicts the first axis well and the second not at
-all — which is precisely why it is complementary rather than sufficient.
-
-### What is deliberately not claimed
-
-- **No log₂ fold change.** `baseline.calibrated()` returns `False`. The matrix
-  cell in `figures/prediction_matrix.svg` needs a dose-ratio regression; the
-  IC₅₀ table that would support it is fetched but not yet wired.
-- **A measurement beats a prediction.** `predict.py` returns the real measured
-  value for the 4,925 variants in the screen and only predicts for the
-  remaining 224. Re-predicting known values would flatter the demo.
-- **Ranking, not thresholds.** At r = 0.33 the output orders variants; it does
-  not support a clinical cutoff, and every report says so.
-
-### Is ESM2 wired? Yes — here is what it needed
-
-It runs locally on Apple Silicon via MPS — **no Modal, no GPU rental, no API
-key**. It needed `torch` and `fair-esm`, which were absent from both system
-interpreters, so they live in a project venv:
-
-```bash
-python -m venv .venv
-.venv/bin/python -m pip install torch fair-esm numpy scikit-learn
-.venv/bin/python -m pipeline.esm2_score          # 271 positions, seconds on MPS
-```
-
-Scores are cached to `data/esm/` keyed by model **and crop**, so a second run is
-instant and a stale crop can never be mistaken for a fresh one. `available()`
-returns `False` without torch and every caller skips rather than crashing, so
-`python main.py` still works on the stdlib-only interpreter.
-
-Two model sizes are wired. `esm2_t12_35M_UR50D` is the fast default used for the
-numbers above; `esm2_t33_650M_UR50D` is the better model and the one
-`esm2_score.DEFAULT_MODEL` points at.
-
-### Repo structure
-
-```
-data/
-├── targets.json              # accessions, PDB refs, numbering offsets, assays
-├── compounds/compounds.json  # SMILES + PubChem CIDs, tagged by experiment
-├── datasets/
-│   ├── SCHEMA.md             # column spec for the original two-experiment design
-│   └── abl_dms_netgrowth_1200nM.csv   # 4,925 measured variants (fetched, MIT)
-├── structures/               # PDB biological assemblies (gitignored cache)
-├── drug_panels/              # from the earlier classification design (see note)
-└── test_cases/               # positive controls (see note)
-pipeline/
-├── fetch.py        # UniProt -> sequence + binding-site residues     [working]
-├── mutant.py       # variant notation -> mutant seq, with renumber() [working]
-├── pocket.py       # min heavy-atom distance to the bound ligand     [working]
-├── dms.py          # BCR-ABL DMS loader, noise floor, position CV    [working]
-├── baseline.py     # distance -> contact score -> call; no keys      [working]
-├── features.py     # substitution / position / ESM blocks            [working]
-├── esm2_score.py   # ESM2 masked marginals, local on MPS, cached     [working]
-├── predict.py      # measurement if known, trained model otherwise   [working]
-├── evidence.py     # Paperclip retrieval, isolated from prediction   [working]
-├── boltz_structure.py # Boltz-2.1 structure + binding via boltz-api CLI
-├── drug_screen.py  # Ptarmigan-1; key present, awaiting API docs     [stub]
-└── agent_report.py # report writer; Keenable agent to be wired       [partial]
-scripts/
-├── make_figures.py       # regenerates figures/ from live pocket geometry
-├── train_baseline.py     # the ablation ladder under position-grouped CV
-├── embed_variants.py     # mutant-marginal embeddings, local on MPS
-├── modal_esm.py          # the same, on a Modal A10G (for the 650M model)
-├── train_embeddings.py   # ridge + GBM heads on the embeddings
-└── plot_predictions.py   # predicted-vs-measured scatter
-figures/            # SVG, written straight from the code that computes them
-data/esm/           # cached marginals + embeddings, keyed by model AND crop
-output/ptarmigan/   # the two wild-type control screens, as returned
-output/model/       # per-variant validation predictions
-```
-
-### Figures
-
-Regenerate with `python scripts/make_figures.py`. Each is written directly from
-`pipeline.pocket`, so a figure cannot drift from the code.
-
-| | |
-| --- | --- |
-| [`pocket_distances.svg`](figures/pocket_distances.svg) | variant-site→inhibitor distance, with the 5 Å contact threshold |
-| [`prediction_matrix.svg`](figures/prediction_matrix.svg) | the output object: variant × compound, and how to read it |
-| [`numbering_systems.svg`](figures/numbering_systems.svg) | one residue across every numbering convention |
-| [`predicted_vs_measured.svg`](figures/predicted_vs_measured.svg) | held-out predictions, with the replicate agreement band drawn |
-
-### Environment gotchas
-
-Two that cost real debugging time on this machine:
-
-- **`paperclip` was silently dark.** `evidence.py` searched only `$HOME` for an
-  interpreter carrying Paperclip's dependencies, but this machine's anaconda is
-  in `/opt`. `available()` returned `False` behind a bare
-  `ModuleNotFoundError: click`. Fixed by searching `/opt` first.
-- **`modal` is installed under the wrong interpreter.** `modal 1.6.4` lives in
-  `/opt/anaconda3` (Python 3.13), while `python3` resolves to the python.org
-  3.11 framework build, where `import modal` fails. Either run the pipeline as
-  `/opt/anaconda3/bin/python3 main.py …` — the whole pipeline imports fine
-  there — or `pip install modal` into 3.11.
-
-## Tools
-
-### In use now (working, committed)
-
-| Tool | Step | Function | Key needed |
-| --- | --- | --- | --- |
-| **UniProt REST API** | 1 | Wildtype sequence + annotated binding-site residues | No |
-| **PubChem PUG REST** | 4 | Source of SMILES for all 37 panel drugs | No |
-| **RCSB PDB** | — | Biological assemblies for pocket geometry | No |
-| **BCR-ABL DMS** (MIT) | — | 4,925 measured variants: the training labels | No |
-| **ESM2** (`fair-esm`) | 2 | Masked-marginal variant scores, local on MPS | **No** |
-| **scikit-learn** | — | Ridge / HistGBM / RandomForest + the CV harness | No |
-| **Paperclip** (CLI) | 5 | Literature evidence, isolated from prediction | No |
-| **Python stdlib** (`urllib`, `re`, `dataclasses`) | 1 | Variant parsing + mutant generation | No |
-
-Note what is *absent* from that list: **no Modal, no GPU rental, no inference
-API**. ESM2 runs on the laptop. The only remaining credentialed dependency on
-the prediction path is Ptarmigan-1, which is optional.
-
-### Planned (interfaces fixed, awaiting wiring)
-
-| Tool | Step | Function | Still needs |
-| --- | --- | --- | --- |
-| **Boltz** | 4 | Mutant structure prediction + binding metrics | Nothing — oauth session in the system keyring |
-| **Keenable** | 5 | Web search / page fetch for the evidence track | A Claude Code restart so the MCP tools load |
-| **Genomic Intelligence** | 5 | Ground-truth cross-referencing | A key in `.env` |
-| **Nebius** | 7 | Rewrites the report prose | Optional — the deterministic renderer already works |
-
-ESM2 and Modal have moved to the working table above: ESM2 runs locally on MPS
-and Modal is authenticated with a GPU path. Ptarmigan-1 is **not** listed as
-planned, because the limitation is structural rather than pending — see above.
-
-### Ground-truth references (Step 5 cross-referencing)
-
-| Source | Domain | Access | Key needed |
-| --- | --- | --- | --- |
-| **OncoKB** | Cancer | REST API, registration required | `ONCOKB_API_TOKEN` |
-| **ClinVar** | Cancer | NCBI E-utilities | No (`NCBI_API_KEY` raises rate limit) |
-| **CARD** | Antimicrobial | Bulk download + local lookup | No (free account for download) |
-| **FRAC** | Agriculture | **No API** — published tables, manual curation | n/a |
-
-### Considered and not used
-
-| Tool | Why |
-| --- | --- |
-| **BioPython** | Spec assigned it Step 1 variant application. Not needed — `mutant.py` does this on the stdlib, and skipping the dependency keeps the demo install trivial. Still listed in `requirements.txt` as optional; drop it if nothing else claims it. |
-| **DrugBank / ChEMBL** | Spec's SMILES source. Used PubChem instead: no key, no licence friction, and it resolved all 36 drugs first try. DrugBank requires a licence for bulk/commercial use. |
-| **AlphaGenome2** | Contrast only, per the plan — it returns expression predictions, not treatment efficacy. Not a pipeline dependency. |
-
-## Benchmark controls
-
-Five cases across three domains; `python main.py --test-case all` runs them all.
-
-| Domain | Gene | Variant | Expected |
-| --- | --- | --- | --- |
-| Oncology | EGFR | T790M | erlotinib, gefitinib **fail**; osimertinib, lazertinib **work** |
-| Oncology | EGFR | L858R | erlotinib, gefitinib, osimertinib all **work** |
-| Agriculture | CYP51 | Y137F | tebuconazole **fails** |
-| Antimicrobial | rpoB | S450L | all rifamycins **fail**; off-target drugs **unchanged** |
-| Antimicrobial | rpoB | D435V | rifampicin **fails**; rifabutin **disputed** (stretch case) |
-
-L858R matters as much as T790M: it catches a model that calls everything resistant.
-
-Every panel includes **off-target controls** — drugs that hit a different protein
-entirely (brigatinib; azoxystrobin, pyraclostrobin, fluxapyroxad; isoniazid,
-moxifloxacin, bedaquiline and the rest of the non-rifamycins). They must come back
-*unchanged*. A pipeline that predicts a binding shift for isoniazid against an
-rpoB variant is reporting noise, and the off-target controls are how you see that.
-
-### Two controls were changed, and one rejected
-
-**Rejected: PBP2a S403L (methicillin fails / ceftaroline works).** Two problems.
-Ser403 is PBP2a's *catalytic active-site serine*; S403L would abolish
-transpeptidase activity rather than confer resistance, and it is not a documented
-resistance substitution. More fundamentally, methicillin resistance in MRSA comes
-from **acquiring** mecA/PBP2a at all — wildtype PBP2a already binds beta-lactams
-poorly. A pipeline that scores mutant-vs-wildtype delta therefore *cannot*
-recover "methicillin fails": the delta is ~zero because the wildtype is already
-resistant. The control would fail by construction, not because the science is
-wrong. Documented ceftaroline-resistance substitutions are Y446N/E447K (binding
-pocket) and N146K/N204K/E239K (allosteric).
-
-**Replaced with: rpoB S450L.** Rifamycins bind RpoB directly, wildtype is
-sensitive, and the variant abolishes binding — so mutant-vs-wildtype delta is
-exactly the right signal. It is the most frequent rifampicin-resistance
-substitution in the RRDR and is catalogued in CARD.
-
-**Agriculture reframed from wheat rust to wheat septoria.** Y137F is documented
-in *Zymoseptoria tritici* and as Y136F in *Blumeria graminis* — not in *Puccinia*
-(wheat rust), which is not primarily controlled by DMI azoles. Septoria keeps the
-literature support and the tebuconazole story intact. Still a valid agricultural
-resilience demo: septoria is the most economically damaging wheat disease in
-Europe.
-
-### Numbering conventions are a live hazard
-
-Clinical nomenclature and UniProt numbering disagree for rpoB. The TB
-literature's **S450L is position 456** in UniProt P9WGY9 — an offset of **+6**.
-Applied naively, S450L lands on Thr450 and silently mutates the wrong residue.
-
-```
-$ python main.py --gene P9WGY9 --variant S450L --mode antimicrobial
-error: S450L: sequence has T at position 450, not S
-```
-
-`strict=True` in `apply_variant()` catches this instead of producing a confident
-wrong answer. Test cases carry a `numbering_offset`, and `mutant.renumber()`
-translates clinical notation into UniProt numbering.
-
-The same hazard bites allele choice: UniProt holds three *Z. tritici* CYP51
-entries, and one (B2L2K3) has **Lys** at 137, so Y137F against it fails
-validation. Test cases pin an explicit accession rather than trusting gene-name
-search.
-
-## A delta alone is not an efficacy prediction
-
-`drug_screen` currently reports mutant-minus-wildtype affinity. That is the right
-primary signal, but on its own it misreads any case where the **wildtype is
-already a poor binder** — the delta is ~0 and the drug scores as "works" when it
-never worked. This is what sinks the MRSA framing above, and it is why the screen
-needs to carry *absolute* mutant affinity alongside the delta, with a
-baseline-sensitivity gate before any verdict. Worth building in before Step 4
-integration rather than after.
-
-## Verdict thresholds are not calibrated
-
-`drug_screen.classify()` uses placeholder cutoffs (fail ≥ 1.5, partial ≥ 0.75
-kcal/mol). Calibrate against the controls above before any verdict is trusted;
-until then, treat output as a pipeline demo, not a prediction.
-
-## Blocked / needs you
-
-- **Nothing is blocked on a missing key any more.** The one-time blockers are
-  resolved: the measured-data transcription (replaced by a public MIT dataset),
-  the Ptarmigan docs (found at `ptarmigan.app/llms.txt`), Paperclip (it was an
-  installed CLI, broken only by interpreter discovery), and ESM2 (needed
-  `torch`, not credentials).
-- **Ptarmigan-1 is structurally limited, not pending.** It screens only
-  wild-type catalog proteins, so `drug_screen.py`'s mutant-minus-wildtype delta
-  cannot be built on it at any price. Either reframe stage 6 as a wild-type
-  control, or drop it.
-- **The $2,500 DNAForge Ptarmigan grant expires 2026-11-15 08:00 UTC.** Unspent
-  credit evaporates; a bigger wild-type screen is the only way to use it.
-- **A Claude Code restart**, so the Keenable MCP tools load.
-- **Genomic Intelligence key**, if you want that cross-referencing channel.
-- **Rotate the Ptarmigan key.** It was pasted into the committed
-  `.env.example` once. Caught before any commit, but treat it as disclosed.
-- **Repo name.** This is `Variant_Navigator`, not `variant-navigator` — kept as-is to avoid breaking your clone; say the word if you want it renamed.
-
-## Scope note
-
-Output is a computational prediction for research use. It is not a clinical
-treatment recommendation or an agronomic spray recommendation.
+The final command uses online sequence/geometry services and explicitly requests
+one Modal model estimate; it keeps measured assay lookup separate. Boltz is
+still disabled unless `--boltz` is supplied.

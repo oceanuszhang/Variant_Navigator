@@ -1,0 +1,9 @@
+{
+  "gene": "ABL1",
+  "uniprot": "P00519",
+  "variant": "T315I",
+  "mode": "oncology",
+  "panel": "oncology",
+  "numbering_offset": 0,
+  "note": "Assay lookup with a separate saved held-out estimate; no clinical verdict."
+}

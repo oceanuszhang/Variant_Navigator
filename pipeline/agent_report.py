@@ -1,9 +1,4 @@
-"""Keenable agent: synthesise pipeline outputs into a clinician/agronomist report.
-
-STUB — Keenable API docs were not available in this working copy. The markdown
-fallback writer below is real, so the pipeline produces a readable report even
-with no agent credentials.
-"""
+"""Deterministic cancer research reports, with an optional unimplemented agent hook."""
 
 from __future__ import annotations
 
@@ -38,7 +33,7 @@ def render_markdown(payload: dict[str, Any]) -> str:
     stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
 
     lines = [
-        f"# {gene} {variant} — drug susceptibility report",
+        f"# {gene} {variant} — variant response research report",
         "",
         f"*Mode:* {mode}  ·  *Generated:* {stamp}",
         "",
@@ -69,11 +64,8 @@ def render_markdown(payload: dict[str, Any]) -> str:
                 f"{pred.get('percentile_vs_screen')}%",
                 f"- Model: {pred.get('source')}",
                 "",
-                f"*Accuracy, measured:* Pearson r = **{pred.get('cv_pearson_r')}** under "
-                f"position-grouped cross-validation — {pred.get('cv_pearson_r', 0) / pred.get('ceiling_r', 1) * 100:.0f}% "
-                f"of the attainable ceiling ({pred.get('ceiling_r')}), MAE "
-                f"{pred.get('cv_mae')}. Useful for ranking variants, **not** as a "
-                "clinical threshold.",
+                f"*Validation:* {pred.get('validation_status', 'unavailable')}. "
+                + pred.get("caveat", "Research use only."),
             ]
         else:
             lines += [
@@ -84,6 +76,33 @@ def render_markdown(payload: dict[str, Any]) -> str:
                 "*This variant is in the screen, so a real measurement is reported "
                 "instead of a prediction.*",
             ]
+
+    esm_prediction = payload.get("esm_prediction")
+    if esm_prediction:
+        lines += ["", "## Persisted ESM model estimate",
+                  f"- Estimate: **{esm_prediction['predicted_netgrowth']:+.5f}**",
+                  f"- Head: {esm_prediction['head']}; model: {esm_prediction['model']}",
+                  f"- Position membership: {esm_prediction['split_membership']}",
+                  f"- Model SHA256: {esm_prediction['model_sha256']}",
+                  f"- Caveat: {esm_prediction['caveat']}"]
+    validation = payload.get("validation")
+    if validation:
+        lines += ["", "## Saved held-out model estimate",
+                  f"- Estimate: **{validation['predicted']:+.5f}**",
+                  f"- Model/head: {validation['model']} / {validation['head']}",
+                  f"- Split: {validation['split']}; seed {validation['seed']}",
+                  f"- Artifact SHA256: {validation['artifact_sha256']}",
+                  f"- Provenance limit: {validation['provenance_limit']}"]
+    structure = payload.get("structure")
+    if structure:
+        lines += ["", "## Boltz structure (ABL1/imatinib)"]
+        for key in ("confidence", "confidence_sd", "binding_confidence", "ptm", "iptm", "crop", "num_samples", "cost_usd", "prediction_id", "path"):
+            lines.append(f"- {key}: {structure.get(key)}")
+        lines.append("Binding confidence is not affinity or drug efficacy.")
+    skipped = payload.get("skipped_stages", [])
+    if skipped:
+        lines += ["", "## Skipped or unsupported stages"]
+        lines.extend(f"- {item['stage']}: {item['reason']}" for item in skipped)
 
     base = payload.get("baseline") or {}
     cells = [c for c in (base.get("cells") or []) if c.get("call") != "no_reference"]
@@ -147,8 +166,8 @@ def render_markdown(payload: dict[str, Any]) -> str:
             "",
             "## Drug panel",
             "",
-            "_Binding screen not wired (needs `PTARMIGAN_API_KEY` + docs). The "
-            "pocket-distance baseline above is the active prediction._",
+            "_Ptarmigan cannot screen mutant sequences. The "
+            "pocket-distance baseline above is a geometric descriptor only._",
         ]
     else:
         lines += ["", "## Drug panel", "", "_No screen results available._"]
@@ -156,7 +175,7 @@ def render_markdown(payload: dict[str, Any]) -> str:
     lines += [
         "",
         "## Caveats",
-        "- Computational prediction only; not a clinical or agronomic recommendation.",
+        "- Computational prediction only; not a clinical recommendation.",
         "- Verdict thresholds are uncalibrated until the benchmark controls pass.",
         "",
     ]
@@ -167,7 +186,7 @@ def write_report(payload: dict[str, Any], *, use_agent: bool = True) -> Report:
     """Write a report to output/reports/, via Keenable if available."""
     REPORT_DIR.mkdir(parents=True, exist_ok=True)
     name = _slug(payload.get("gene", "gene"), payload.get("variant", "variant"))
-    stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S-%f")
 
     markdown, generated_by = None, "fallback-renderer"
     if use_agent and available():
@@ -180,8 +199,8 @@ def write_report(payload: dict[str, Any], *, use_agent: bool = True) -> Report:
         markdown = render_markdown(payload)
 
     path = REPORT_DIR / f"{name}_{stamp}.md"
-    path.write_text(markdown)
-    (REPORT_DIR / f"{name}_{stamp}.json").write_text(json.dumps(payload, indent=2, default=str))
+    path.write_text(markdown, encoding="utf-8")
+    (REPORT_DIR / f"{name}_{stamp}.json").write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8")
     return Report(path=path, markdown=markdown, generated_by=generated_by)
 
 

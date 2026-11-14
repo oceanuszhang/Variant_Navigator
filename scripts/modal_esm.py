@@ -81,7 +81,7 @@ def embed_mutants(
 
 
 @app.local_entrypoint()
-def main(model: str = LARGE, limit: int = 0, batch: int = 32):
+def main(model: str = SMALL, limit: int = 0, batch: int = 8):
     import json
     import sys
     import urllib.request
@@ -94,18 +94,18 @@ def main(model: str = LARGE, limit: int = 0, batch: int = 32):
 
     out_dir = Path("data/esm")
     out_dir.mkdir(parents=True, exist_ok=True)
-    seq_cache = out_dir / "P00519.seq"
-    if seq_cache.exists():
-        seq = seq_cache.read_text().strip()
-    else:
-        url = "https://rest.uniprot.org/uniprotkb/P00519.json?fields=sequence"
-        seq = json.load(urllib.request.urlopen(url, timeout=60))["sequence"]["value"]
-        seq_cache.write_text(seq)
+    import hashlib
+    seq = Path("data/cancer-exp/ABL1_NM_005157.6_DMS_reference_aa.txt").read_text().strip()
     print(f"P00519: {len(seq)} aa")
 
+    if batch < 1 or limit < 0:
+        raise ValueError("batch must be positive; limit must be nonnegative")
     variants = dms.load_netgrowth()
     if limit:
-        variants = variants[:limit]
+        if limit < 1:
+            raise ValueError("limit must be positive")
+        indices = np.linspace(0, len(variants) - 1, min(limit, len(variants)), dtype=int)
+        variants = [variants[i] for i in indices]
     lo, hi = 1, min(len(seq), MAX_LEN)
     crop = seq[lo - 1 : hi]
 
@@ -120,6 +120,8 @@ def main(model: str = LARGE, limit: int = 0, batch: int = 32):
     vecs = embed_mutants.remote(crop, jobs, lo, model, batch)
 
     X = np.asarray(vecs, dtype=np.float32)
+    if X.ndim != 2 or X.shape[0] != len(variants) or not np.isfinite(X).all():
+        raise RuntimeError("Invalid embedding response shape or nonfinite values")
     y = np.array([v.response for v in variants], dtype=np.float32)
     groups = np.array([v.position for v in variants], dtype=np.int32)
     rep1 = np.array([np.nan if v.rep1 is None else v.rep1 for v in variants], dtype=np.float32)
@@ -127,10 +129,14 @@ def main(model: str = LARGE, limit: int = 0, batch: int = 32):
     names = np.array([v.mutant for v in variants])
 
     # A --limit run must never overwrite a full one: tag partial outputs.
-    suffix = "_mutdiff" if not limit else f"_mutdiff_n{len(variants)}"
+    suffix = "_study518_mutdiff" if not limit else f"_study518_mutdiff_n{len(variants)}"
     stem = out_dir / f"P00519_{model}{suffix}"
     np.savez_compressed(f"{stem}.npz", X=X, y=y, groups=groups, rep1=rep1,
                         rep2=rep2, names=names, crop=np.array([lo, hi]),
-                        model=np.array([model]))
+                        model=np.array([model]), reference=np.array([crop]),
+                        sequence_sha256=np.array([hashlib.sha256(crop.encode()).hexdigest()]),
+                        dataset_sha256=np.array([hashlib.sha256(dms.NETGROWTH_CSV.read_bytes()).hexdigest()]),
+                        feature_recipe=np.array(["mutant_minus_reference_at_variant_residue"]),
+                        partial=np.array([bool(limit)]))
     print(f"wrote {stem}.npz  X={X.shape}")
     print(f"mean |feature| = {float(np.abs(X).mean()):.5f}")

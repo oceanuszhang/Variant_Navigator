@@ -1,12 +1,9 @@
 #!/usr/bin/env python3
-"""VariantNavigator — predict which drugs still work against a mutant target.
+"""Cancer variant assay response and structural research workflow.
 
-    python main.py --gene EGFR --variant T790M --mode oncology
-    python main.py --test-case egfr_t790m
-    python main.py --test-case all
-
-Stages that are not wired up yet (ESM2, Boltz, Ptarmigan-1) are skipped with a
-note rather than aborting the run, so the pipeline always produces a report.
+Offline demo: python main.py --gene ABL1 --variant T315I --offline --no-agent
+Online structures: add --boltz to opt in to budget-capped ABL1/imatinib calls.
+Optional stages report skips; invalid input fails before prediction.
 """
 
 from __future__ import annotations
@@ -15,26 +12,30 @@ import argparse
 import json
 import sys
 from pathlib import Path
+from dataclasses import asdict
+import subprocess
+import hashlib
 from typing import Any
 
 from pipeline import (
     agent_report,
     baseline,
-    dms,
     predict,
     boltz_structure,
-    drug_screen,
     esm2_score,
 )
-from pipeline.fetch import fetch_protein
+from pipeline.fetch import fetch_protein, Protein
 from pipeline.mutant import VariantError, apply_variant
 
 TEST_CASE_DIR = Path("data/test_cases")
-DEFAULT_PANEL = {
-    "oncology": "oncology",
-    "agriculture": "fungicides",
-    "antimicrobial": "antibiotics",
-}
+SUPPORTED_TARGETS = {"ABL1": "P00519", "P00519": "P00519", "EGFR": "P00533", "P00533": "P00533"}
+
+
+def oncology_cases() -> list[Path]:
+    """Return active cancer controls, excluding historical other domains."""
+    return [p for p in sorted(TEST_CASE_DIR.glob("*.json"))
+            if json.loads(p.read_text(encoding="utf-8")).get("mode") == "oncology"]
+
 
 
 def load_env(path: str | Path = ".env") -> None:
@@ -62,13 +63,33 @@ def run(
     expected: dict[str, str] | None = None,
     offset: int = 0,
     use_agent: bool = True,
+    offline: bool = False,
+    run_boltz: bool = False,
+    esm_run_dir: Path | None = None,
 ) -> dict[str, Any]:
-    panel = panel or DEFAULT_PANEL.get(mode, "oncology")
+    if mode != "oncology":
+        raise ValueError("Only oncology is supported")
+    accession = SUPPORTED_TARGETS.get(gene.strip().upper())
+    if accession is None:
+        raise ValueError("Supported targets: ABL1/P00519 and EGFR/P00533")
+    if organism_id not in (None, 9606) or offset != 0:
+        raise ValueError("Supported targets use human (9606), offset 0 numbering")
+    panel = panel or "oncology"
+    if panel != "oncology":
+        raise ValueError("Only the oncology panel is supported")
     print(f"\n{'=' * 66}\n{gene} {variant}  [{mode} / {panel} panel]\n{'=' * 66}")
 
     # 1 — wildtype sequence + binding annotations
     print("[1/6] UniProt fetch…", end=" ", flush=True)
-    protein = fetch_protein(gene, organism_id)
+    if offline:
+        if accession != "P00519":
+            raise ValueError("Offline sequence reference is available only for ABL1")
+        seq = Path("data/cancer-exp/ABL1_NM_005157.6_DMS_reference_aa.txt").read_text().strip()
+        protein = Protein("P00519", "ABL1", "ABL1 study reference", "Homo sapiens", seq)
+    else:
+        protein = fetch_protein(accession, organism_id)
+    if protein.organism != "Homo sapiens":
+        raise ValueError("Only human cancer targets are supported")
     print(f"{protein.accession} ({protein.organism}), {protein.length} aa")
 
     # 2 — apply the variant
@@ -93,17 +114,23 @@ def run(
         "uniprot": protein.accession,
         "organism": protein.organism,
         "sequence_length": protein.length,
+        "sequence_sha256": hashlib.sha256(protein.sequence.encode("ascii")).hexdigest(),
         "binding_residues": pocket,
         "in_binding_site": in_site,
         "mutated_positions": mutant.positions,
         "numbering_offset": offset,
         "expected": expected or {},
         "skipped_stages": [],
+        "schema_version": 1,
+        "offline": offline,
+        "sequence_source": "518-aa study reference" if offline else "UniProt",
     }
 
     # 3 — ESM2 sequence-model score
     print("[3/6] ESM2 scoring…", end=" ", flush=True)
     try:
+        if offline:
+            raise esm2_score.ESMUnavailable("disabled in offline mode")
         if not esm2_score.available():
             raise esm2_score.ESMUnavailable(
                 "torch / fair-esm not installed; use .venv/bin/python"
@@ -122,17 +149,22 @@ def run(
     print("[4/6] Boltz structure…", end=" ", flush=True)
     structure = None
     try:
+        if offline or not run_boltz:
+            raise boltz_structure.BoltzUnavailable("disabled; opt in with --boltz (online only)")
+        if accession != "P00519":
+            raise boltz_structure.BoltzUnavailable("Boltz crop is validated only for ABL1/imatinib")
+        if mutant.deletions or any(not 242 <= p <= 512 for p in mutant.positions):
+            raise boltz_structure.BoltzUnavailable("Boltz supports ABL1 substitutions at 242-512 only")
         structure = boltz_structure.predict_structure(
-            mutant.sequence, name=f"{gene}_{variant}", pocket_hint=pocket
+            mutant.sequence, name=f"{protein.gene}_{variant}", pocket_hint=pocket, compound="imatinib"
         )
-        payload["structure"] = {
-            "path": str(structure.path),
-            "confidence": structure.confidence,
-        }
+        payload["structure"] = {**asdict(structure), "path": str(structure.path)}
+        payload["structure"].pop("sequence", None)
         print(f"pLDDT={structure.confidence:.1f}")
-    except NotImplementedError as exc:
+    except (NotImplementedError, boltz_structure.BoltzUnavailable,
+            boltz_structure.BoltzTooExpensive, OSError, subprocess.TimeoutExpired, ValueError, KeyError) as exc:
         payload["skipped_stages"].append({"stage": "boltz", "reason": str(exc)})
-        print("skipped (not wired)")
+        print(f"skipped ({exc})")
 
     # 5 — pocket-distance baseline. Runs on public structures with no API key,
     # so this is the stage that keeps the demo predictive while Steps 3, 4 and 6
@@ -140,6 +172,8 @@ def run(
     # offset we applied above.
     print("[5/6] pocket baseline…", end=" ", flush=True)
     try:
+        if offline:
+            raise RuntimeError("reference-structure retrieval disabled in offline mode")
         compounds = baseline.compounds_for_target(protein.accession)
         if not compounds:
             raise RuntimeError(
@@ -169,44 +203,43 @@ def run(
         print(f"skipped ({exc})")
 
     # 5b — trained net-growth model. Only ABL1/imatinib has measured data, so
-    # this is skipped (not faked) for every other target.
+    # Only ABL1/imatinib has response data.
     if protein.accession.upper() == "P00519":
         print("[5b/6] trained model…", end=" ", flush=True)
         try:
             subs = mutant.substitutions
-            if len(subs) != 1:
+            if len(subs) != 1 or mutant.deletions:
                 raise RuntimeError("trained model covers single substitutions only")
             s = subs[0]
-            pred = predict.predict_variant(s.position - offset, s.wt, s.mt)
+            pred = predict.predict_variant(s.position, s.wt, s.mt, allow_inference=not offline and esm_run_dir is None)
             payload["prediction"] = pred
+            try:
+                payload["validation"] = predict.held_out(str(s))
+            except (OSError, ValueError, KeyError, TypeError) as exc:
+                payload["skipped_stages"].append({"stage": "validation", "reason": str(exc)})
             val = pred.get("predicted_netgrowth", pred.get("measured_netgrowth"))
             kind = "predicted" if pred["predicted"] else "MEASURED in screen"
             print(f"netgrowth={val:+.5f} ({kind})")
-        except (RuntimeError, predict.PredictError, dms.DMSError) as exc:
+        except (RuntimeError, OSError, ValueError) as exc:
             payload["skipped_stages"].append({"stage": "model", "reason": str(exc)})
             print(f"skipped ({exc})")
 
-    # 6 — drug panel screen
-    print("[6/6] drug screen…", end=" ", flush=True)
-    try:
-        screen = drug_screen.screen_panel(
-            protein.gene,
-            variant,
-            protein.sequence,
-            mutant.sequence,
-            panel,
-            pocket_residues=structure.pocket_residues if structure else pocket,
-        )
-        payload["screen"] = {
-            "panel": screen.panel,
-            "results": [r.__dict__ for r in screen.ranked()],
-        }
-        print(f"{len(screen.results)} drugs, {len(screen.still_works())} retained")
-    except (NotImplementedError, RuntimeError) as exc:
-        drugs = drug_screen.load_panel(panel)
-        payload["skipped_stages"].append({"stage": "drug_screen", "reason": str(exc)})
-        payload["screen"] = {"panel": panel, "results": []}
-        print(f"skipped (not wired; {len(drugs)} drugs staged)")
+    else:
+        payload["skipped_stages"].append({"stage": "model", "reason": "Response model covers ABL1/imatinib only"})
+
+    if esm_run_dir is not None:
+        try:
+            if offline or accession != "P00519":
+                raise ValueError("Explicit ESM inference requires online ABL1 input")
+            from pipeline import embedding_model
+            payload["esm_prediction"] = embedding_model.predict_variant(esm_run_dir, variant)
+        except (RuntimeError, ValueError, OSError, ImportError, KeyError) as exc:
+            payload["skipped_stages"].append({"stage": "esm_inference", "reason": str(exc)})
+
+    reason = "Ptarmigan supports wild-type catalog targets, not mutant binding prediction"
+    payload["screen"] = {"panel": panel, "results": [], "status": "unsupported", "reason": reason}
+    payload["skipped_stages"].append({"stage": "drug_screen", "reason": reason})
+    payload["status"] = "partial" if payload["skipped_stages"] else "complete"
 
     report = agent_report.write_report(payload, use_agent=use_agent)
     print(f"\nreport: {report.path}  [{report.generated_by}]")
@@ -216,7 +249,7 @@ def run(
     return payload
 
 
-def run_test_case(name: str, *, use_agent: bool = True) -> dict[str, Any]:
+def run_test_case(name: str, *, use_agent: bool = True, offline: bool = False, run_boltz: bool = False, esm_run_dir: Path | None = None) -> dict[str, Any]:
     path = TEST_CASE_DIR / f"{name}.json"
     if not path.exists():
         raise FileNotFoundError(f"no test case {name!r} in {TEST_CASE_DIR}")
@@ -231,7 +264,7 @@ def run_test_case(name: str, *, use_agent: bool = True) -> dict[str, Any]:
         organism_id=case.get("organism_id"),
         expected=case.get("expected"),
         offset=case.get("numbering_offset", 0),
-        use_agent=use_agent,
+        use_agent=use_agent, offline=offline, run_boltz=run_boltz, esm_run_dir=esm_run_dir,
     )
 
 
@@ -241,7 +274,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--variant", help="variant notation, e.g. T790M")
     ap.add_argument(
         "--mode",
-        choices=["oncology", "agriculture", "antimicrobial"],
+        choices=["oncology"],
         default="oncology",
     )
     ap.add_argument("--panel", help="override drug panel (name or path)")
@@ -250,10 +283,13 @@ def main(argv: list[str] | None = None) -> int:
         "--offset",
         type=int,
         default=0,
-        help="shift variant numbering into UniProt numbering (rpoB needs +6)",
+        help="supported human targets require offset 0",
     )
     ap.add_argument("--test-case", help="run a benchmark case by id, or 'all'")
     ap.add_argument("--no-agent", action="store_true", help="force the local report renderer")
+    ap.add_argument("--offline", action="store_true", help="ABL1 study reference and cached assay; no network or inference")
+    ap.add_argument("--boltz", action="store_true", help="opt in to budget-capped Boltz ABL1/imatinib calls")
+    ap.add_argument("--esm-run-dir", type=Path, help="trusted saved ESM model directory; opt in to one Modal embedding")
     args = ap.parse_args(argv)
 
     load_env()
@@ -262,20 +298,20 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.test_case == "all":
             failures = []
-            for path in sorted(TEST_CASE_DIR.glob("*.json")):
+            for path in oncology_cases():
                 try:
-                    run_test_case(path.stem, use_agent=use_agent)
-                except (VariantError, LookupError, ValueError) as exc:
+                    run_test_case(path.stem, use_agent=use_agent, offline=args.offline, run_boltz=args.boltz, esm_run_dir=args.esm_run_dir)
+                except (VariantError, LookupError, ValueError, OSError) as exc:
                     failures.append((path.stem, exc))
                     print(f"  FAILED: {exc}")
             print(f"\n{'=' * 66}")
-            total = len(list(TEST_CASE_DIR.glob('*.json')))
+            total = len(oncology_cases())
             print(f"{total - len(failures)}/{total} cases ran")
             for name, exc in failures:
                 print(f"  {name}: {exc}")
             return 1 if failures else 0
         elif args.test_case:
-            run_test_case(args.test_case, use_agent=use_agent)
+            run_test_case(args.test_case, use_agent=use_agent, offline=args.offline, run_boltz=args.boltz, esm_run_dir=args.esm_run_dir)
         elif args.gene and args.variant:
             run(
                 args.gene,
@@ -284,11 +320,11 @@ def main(argv: list[str] | None = None) -> int:
                 panel=args.panel,
                 organism_id=args.organism_id,
                 offset=args.offset,
-                use_agent=use_agent,
+                use_agent=use_agent, offline=args.offline, run_boltz=args.boltz, esm_run_dir=args.esm_run_dir,
             )
         else:
             ap.error("give --gene and --variant, or --test-case")
-    except (VariantError, LookupError, FileNotFoundError, ValueError) as exc:
+    except (VariantError, LookupError, FileNotFoundError, ValueError, OSError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
     return 0
