@@ -1,11 +1,31 @@
-# Core pipeline (fetch.py + mutant.py use the stdlib only)
-requests>=2.32.0
+# VariantNavigator runs on the Python 3.11+ standard library alone.
+#
+#   python main.py --test-case all
+#   python -m pipeline.baseline
+#   python -m pipeline.pocket
+#   python scripts/make_figures.py
+#
+# All of the above need NO pip install and NO API key. Network access to
+# UniProt, PubChem and RCSB PDB is the only external dependency, and all three
+# are public and keyless. HTTP is urllib; figures are hand-written SVG; the
+# pocket maths is the math module. This is deliberate — it keeps the demo
+# install instant and removes the usual cause of a dead hackathon laptop.
+#
+# Nothing is pinned here because nothing is imported. Verify with:
+#   grep -rE '^\s*(import|from) ' main.py pipeline/ scripts/
+#
+# ---------------------------------------------------------------------------
+# Previously listed and removed, because no module imports them:
+#   requests  - superseded by urllib in fetch.py / pocket.py
+#   rdkit     - SMILES are consumed as opaque strings; this was a slow build
+#               for nothing
+#   modal     - only named in a config string in esm2_score.py, never imported
+# Re-add them in the extras below if and when the stubs are actually wired.
+# ---------------------------------------------------------------------------
 
-# ESM2 / Boltz execution on Modal
-modal>=0.64.0
+# Optional, for the stages that are still stubs and need credentials:
+#   modal>=0.64.0     # GPU backend for esm2_score.py + boltz_structure.py
+#   requests>=2.32.0  # if a wired API client is easier to write with it
 
-# Chemistry utilities for the drug panels (SMILES validation, descriptors)
-rdkit>=2024.3.1
-
-# Dev
-pytest>=8.0.0
+# Optional, for development:
+#   pytest>=8.0.0     # no test suite in the repo yet

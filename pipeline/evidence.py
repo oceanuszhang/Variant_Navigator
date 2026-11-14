@@ -47,7 +47,17 @@ TIMEOUT = 60
 # Paperclip ships as a CLI whose shebang is `/usr/bin/env python3`; whichever
 # python that resolves to must have `click` installed. On this machine it is the
 # anaconda interpreter, not the system one, so we find a working PATH once.
+# A system-wide anaconda install lives in /opt, not under $HOME, and that is the
+# case on this machine: click is in /opt/anaconda3 (3.13) while `python3`
+# resolves to the python.org 3.11 framework build, which has no click. Searching
+# only $HOME left paperclip permanently "unavailable" with a bare
+# ModuleNotFoundError. /opt paths are listed first because a system install is
+# the likelier place for a shared dependency.
 _CANDIDATE_DIRS = [
+    Path("/opt/anaconda3/bin"),
+    Path("/opt/miniforge3/bin"),
+    Path("/opt/miniconda3/bin"),
+    Path("/opt/homebrew/bin"),
     Path.home() / "anaconda3" / "bin",
     Path.home() / "miniforge3" / "bin",
     Path.home() / "miniconda3" / "bin",

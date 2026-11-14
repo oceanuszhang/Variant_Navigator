@@ -10,7 +10,7 @@
       "1M17",
       "4ZAU"
     ],
-    "pdb_note": "1M17 = EGFR kinase + erlotinib; 4ZAU = EGFR T790M + osimertinib. Pocket geometry source.",
+    "pdb_note": "1M17 = EGFR kinase + erlotinib, MATURE-protein numbering (offset -24, clinical T790 = residue 766); 4ZAU = WILD-TYPE EGFR + osimertinib, clinical numbering (offset 0). 4ZAU is not T790M: residue 790 is Thr, verified by pipeline.pocket.validate_references(). Pocket geometry source.",
     "assay": "Ba/F3 cell viability IC50",
     "reference_genotype": "wild-type EGFR",
     "compounds": [

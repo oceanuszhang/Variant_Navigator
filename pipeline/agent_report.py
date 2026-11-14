@@ -58,6 +58,45 @@ def render_markdown(payload: dict[str, Any]) -> str:
             f"- Model: {esm.get('model', 'n/a')}",
         ]
 
+    base = payload.get("baseline") or {}
+    cells = [c for c in (base.get("cells") or []) if c.get("call") != "no_reference"]
+    if cells:
+        cutoff = base.get("contact_cutoff_angstrom", 5.0)
+        lines += [
+            "",
+            "## Pocket-distance baseline",
+            "",
+            "Minimum heavy-atom distance from the variant site to the bound",
+            f"inhibitor in a public reference structure. Under {cutoff:g} Å the site",
+            "touches the drug.",
+            "",
+            "| Compound | Position | PDB | Distance (Å) | Contact score | Call |",
+            "| --- | --- | --- | --- | --- | --- |",
+        ]
+        for c in cells:
+            approx = "~" if c.get("approximate") else ""
+            lines.append(
+                f"| {c.get('compound')} | {c.get('published_position')} "
+                f"| {c.get('pdb')} | {c.get('distance_angstrom'):.2f}{approx} "
+                f"| {c.get('contact_score'):.2f} "
+                f"| {c.get('call', 'n/a').replace('_', ' ')} |"
+            )
+        if any(c.get("approximate") for c in cells):
+            lines += [
+                "",
+                "~ = the reference structure holds a related, not identical, "
+                "inhibitor, so the distance is approximate.",
+            ]
+        if not base.get("calibrated", False):
+            lines += [
+                "",
+                "**Uncalibrated.** This is a geometric prior, not an efficacy "
+                "prediction: no log₂ fold change is reported because there is no "
+                "measured dose-response data to regress against yet. Distance is "
+                "also blind to chemistry — it cannot see that osimertinib was "
+                "designed to tolerate the T790M gatekeeper.",
+            ]
+
     if results:
         lines += [
             "",
@@ -75,6 +114,14 @@ def render_markdown(payload: dict[str, Any]) -> str:
             )
         kept = [r["name"] for r in results if r.get("verdict") == "work"]
         lines += ["", f"**Predicted to retain activity:** {', '.join(kept) or 'none'}"]
+    elif cells:
+        lines += [
+            "",
+            "## Drug panel",
+            "",
+            "_Binding screen not wired (needs `PTARMIGAN_API_KEY` + docs). The "
+            "pocket-distance baseline above is the active prediction._",
+        ]
     else:
         lines += ["", "## Drug panel", "", "_No screen results available._"]
 

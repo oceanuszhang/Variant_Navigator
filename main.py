@@ -17,7 +17,13 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from pipeline import agent_report, boltz_structure, drug_screen, esm2_score
+from pipeline import (
+    agent_report,
+    baseline,
+    boltz_structure,
+    drug_screen,
+    esm2_score,
+)
 from pipeline.fetch import fetch_protein
 from pipeline.mutant import VariantError, apply_variant
 
@@ -59,12 +65,12 @@ def run(
     print(f"\n{'=' * 66}\n{gene} {variant}  [{mode} / {panel} panel]\n{'=' * 66}")
 
     # 1 — wildtype sequence + binding annotations
-    print("[1/5] UniProt fetch…", end=" ", flush=True)
+    print("[1/6] UniProt fetch…", end=" ", flush=True)
     protein = fetch_protein(gene, organism_id)
     print(f"{protein.accession} ({protein.organism}), {protein.length} aa")
 
     # 2 — apply the variant
-    print("[2/5] applying variant…", end=" ", flush=True)
+    print("[2/6] applying variant…", end=" ", flush=True)
     mutant = apply_variant(protein.sequence, variant, offset=offset)
     pocket = protein.binding_positions()
     in_site = any(p in pocket for p in mutant.positions)
@@ -94,7 +100,7 @@ def run(
     }
 
     # 3 — ESM2 sequence-model score
-    print("[3/5] ESM2 scoring…", end=" ", flush=True)
+    print("[3/6] ESM2 scoring…", end=" ", flush=True)
     try:
         score = esm2_score.score_variant(protein.sequence, mutant.sequence, variant)
         payload["esm2"] = score.__dict__
@@ -104,7 +110,7 @@ def run(
         print("skipped (not wired)")
 
     # 4 — mutant structure
-    print("[4/5] Boltz structure…", end=" ", flush=True)
+    print("[4/6] Boltz structure…", end=" ", flush=True)
     structure = None
     try:
         structure = boltz_structure.predict_structure(
@@ -119,8 +125,42 @@ def run(
         payload["skipped_stages"].append({"stage": "boltz", "reason": str(exc)})
         print("skipped (not wired)")
 
-    # 5 — drug panel screen
-    print("[5/5] drug screen…", end=" ", flush=True)
+    # 5 — pocket-distance baseline. Runs on public structures with no API key,
+    # so this is the stage that keeps the demo predictive while Steps 3, 4 and 6
+    # wait on credentials. Published numbering = UniProt positions minus the
+    # offset we applied above.
+    print("[5/6] pocket baseline…", end=" ", flush=True)
+    try:
+        compounds = baseline.compounds_for_target(protein.accession)
+        if not compounds:
+            raise RuntimeError(
+                f"no reference-structure compounds for {protein.accession}"
+            )
+        published = [
+            (s.position - offset, s.wt) for s in mutant.substitutions
+        ]
+        rows = baseline.predict_panel(published, compounds)
+        payload["baseline"] = {
+            "calibrated": baseline.calibrated(),
+            "contact_cutoff_angstrom": baseline.CONTACT_CUTOFF,
+            "cells": rows,
+        }
+        scored = [r for r in rows if r.get("call") != "no_reference"]
+        affected = [r for r in scored if r["call"] == "likely_affected"]
+        if scored:
+            print(
+                f"{len(scored)} cells; "
+                f"{len(affected)} likely affected "
+                f"({', '.join(sorted({r['compound'] for r in affected})) or 'none'})"
+            )
+        else:
+            print("no cells scored (no residue match in reference structures)")
+    except (RuntimeError, OSError) as exc:
+        payload["skipped_stages"].append({"stage": "baseline", "reason": str(exc)})
+        print(f"skipped ({exc})")
+
+    # 6 — drug panel screen
+    print("[6/6] drug screen…", end=" ", flush=True)
     try:
         screen = drug_screen.screen_panel(
             protein.gene,
