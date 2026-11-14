@@ -14,3 +14,5 @@ data/structures/
 
 .venv/
 data/esm/
+
+output/model/
