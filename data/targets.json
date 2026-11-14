@@ -18,6 +18,30 @@
       "osimertinib"
     ]
   },
+  "abl1": {
+    "experiment": 3,
+    "organism": "Homo sapiens",
+    "uniprot": "P00519",
+    "uniprot_gene": "ABL1",
+    "length": 1130,
+    "numbering": "ABL1a numbering. UniProt P00519 (1130 aa) agrees at offset 0, verified against Thr315/Tyr253/Glu255/Gly250/Met351/His396.",
+    "numbering_offset": 0,
+    "numbering_warning": "Two conventions exist: ABL1a (gatekeeper Thr315) and ABL1b (+19, same residue is 334). The DMS, UniProt P00519 and PDB 1IEP/2HYY all use 1a at offset 0, but PDB 1OPJ carries the same imatinib ligand at offset +19 - substituting it silently returns the wrong residue.",
+    "pdb_reference": [
+      "1IEP",
+      "2HYY"
+    ],
+    "pdb_note": "Both hold imatinib as ligand STI at offset 0. 1IEP is the pocket-geometry source.",
+    "assay": "Ba/F3 net growth rate at 1200 nM imatinib, 6 days, TileSeq + duplex sequencing",
+    "reference_genotype": "wild-type BCR-ABL",
+    "compounds": [
+      "imatinib"
+    ],
+    "measured_data": "data/datasets/abl_dms_netgrowth_1200nM.csv",
+    "measured_data_source": "https://github.com/pritchardlabatpsu/abl_dms (MIT)",
+    "measured_variants": 4925,
+    "domain_residues": [242, 512]
+  },
   "rice_als": {
     "experiment": 2,
     "organism": "Oryza sativa (weedy rice accessions)",

@@ -58,6 +58,13 @@ POCKET_REFERENCE: dict[str, dict[str, Any]] = {
                     "pdb_offset": 0,
                     "note": "osimertinib bound to WILD-TYPE EGFR (Thr790 "
                             "present, not T790M). Numbering matches clinical."},
+    "imatinib":    {"pdb": "1IEP", "ligand": "STI", "exact": True,
+                    "pdb_offset": 0,
+                    "note": "imatinib bound to ABL1 kinase. 1IEP numbering "
+                            "matches ABL1a == UniProt P00519 == the BCR-ABL DMS "
+                            "dataset, all at offset 0. Do NOT substitute 1OPJ: "
+                            "it holds the same STI ligand but needs offset +19, "
+                            "so it would return the wrong residue's distance."},
     "imazethapyr": {"pdb": "1Z8N", "ligand": "1IQ", "exact": False,
                     "pdb_offset": 0,
                     "note": "imazaquin in Arabidopsis ALS; same imidazolinone "
@@ -263,6 +270,9 @@ def validate_references() -> list[dict[str, Any]]:
         ("erlotinib", 858, "L", "EGFR Leu858"),
         ("osimertinib", 790, "T", "EGFR Thr790 (4ZAU is wild-type)"),
         ("osimertinib", 858, "L", "EGFR Leu858"),
+        ("imatinib", 315, "T", "ABL1 gatekeeper Thr315 (T315I is the classic escape)"),
+        ("imatinib", 253, "Y", "ABL1 Tyr253 - P-loop"),
+        ("imatinib", 396, "H", "ABL1 His396 - activation loop, allosteric escape"),
         ("imazethapyr", 122, "A", "ALS Ala122 - dimer-interface residue"),
         ("imazethapyr", 574, "W", "ALS Trp574"),
         ("imazethapyr", 653, "S", "ALS Ser653"),
