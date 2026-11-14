@@ -207,6 +207,117 @@ Two further facts that constrain any model built on this data:
   drug *works*. A single scalar cannot separate "kinase dead" from "drug
   evaded", and the two have opposite clinical meaning.
 
+## Sponsor tools — what each one actually did
+
+Recorded honestly, including the one that could not do what we hoped. Every
+claim below was verified by running it, not by reading a landing page.
+
+| Tool | Used for | Outcome |
+| --- | --- | --- |
+| **Talus Bio Ptarmigan-1** | Compound→target engagement screen | ✅ Ran 2 screens, $0.06. **Cannot score mutants** — see below |
+| **Modal** | ESM-2 on A10G GPU, persistent weights Volume | ✅ Smoke-tested end to end; makes the 650M model practical |
+| **ESM-2** (`fair-esm`) | Variant scoring, two different ways | ✅ The single most valuable feature block (r 0.245 → 0.3315) |
+| **Paperclip** | Literature evidence, isolated from prediction | ✅ Returns live PMC citations — was silently broken, fixed |
+| **Boltz** | Mutant structure prediction (stage 4) | ⏳ CLI v0.44.0 installed, oauth authenticated, not yet called |
+| **Keenable** | Web search / page fetch for agents | ⏳ MCP server ✔ Connected; tools need a Claude Code restart |
+| **Genomic Intelligence** | Ground-truth cross-referencing | ⏳ `.env` placeholder added, awaiting key |
+
+### Ptarmigan-1 cannot score mutants, and that is structural
+
+Their documentation is explicit:
+
+> *"Only the human proteins listed there can be screened; there is no way to add
+> one."*
+
+Confirmed against the live API: EGFR returns exactly one entry,
+`uniprot_accession: P00533` — canonical wild-type, no variant field. So
+`drug_screen.py`'s design, `screen_panel(gene, variant, wt_sequence,
+mt_sequence, …)` → mutant-minus-wildtype delta, is **unimplementable**. T790M and
+wild-type EGFR return identical results, making the delta structurally zero.
+The API key was never the blocker; the API shape is.
+
+What it *can* do, it did well — as a **panel-design control**:
+
+| | ABL1 screen | EGFR screen |
+| --- | --- | --- |
+| **imatinib** | **#1** of 12 (0.5572) | **#12** of 12 (0.4744) |
+| **brigatinib** (off-target control) | **#12** (0.4876) | #11 (0.5139) |
+
+Imatinib tops the ABL1 screen and comes last on EGFR; the deliberately planted
+off-target control sinks on both. One prediction is genuinely sharp —
+neratinib peaks at residue **797C**, the real covalent anchor for EGFR
+inhibitors, and erlotinib/gefitinib/icotinib cluster at **744** in the ATP site.
+
+Two caveats kept attached to that data in `output/ptarmigan/`:
+
+- **Narrow dynamic range.** 0.4876–0.5572 (ABL1), 0.4744–0.5850 (EGFR), all near
+  0.5, and their docs warn against reading 0.5 as a cutoff. The *ranking*
+  carries the signal; the absolute values do not. Both targets also exceed the
+  model's 766-residue training length, so both are flagged out-of-distribution.
+- **Peak residues are about half wrong.** Only 8/12 (ABL1) and 6/12 (EGFR) land
+  inside the kinase domain. `gefitinib → 99W` on ABL1 and `dacomitinib → 535C`
+  in the EGFR *extracellular* domain are not credible sites.
+
+### Modal: what it is for here
+
+The 35M model runs fine on local MPS and produced the headline numbers. Modal
+earns its place on the **650M** model, a 2.5 GB download that stalled twice on
+local wifi: on Modal the weights persist in a Volume and the passes run on an
+A10G.
+
+```bash
+/opt/anaconda3/bin/modal run scripts/modal_esm.py                      # 650M
+/opt/anaconda3/bin/modal run scripts/modal_esm.py --model esm2_t12_35M_UR50D
+```
+
+`modal` is installed only under `/opt/anaconda3` (Python 3.13), not the venv —
+see "Environment gotchas".
+
+## Two ways to use ESM-2, and why both exist
+
+| | Masked marginals | Mutant-marginal difference |
+| --- | --- | --- |
+| Feature | `log P(alt) − log P(ref)` at masked *i* | `h_mut[i] − h_ref[i]` |
+| Dimensions | 5 | 480 (35M) / 1280 (650M) |
+| Forward passes | **271** (one per position) | **4,926** (one per variant) |
+| Wired into `main.py` | ✅ yes | research script |
+| Script | `pipeline/esm2_score.py` | `scripts/embed_variants.py` |
+
+Both read **one residue**, never a pooled mean. That is the whole trick: all
+4,925 variants are the same protein at 99.82% sequence identity, so a
+mean-pooled whole-sequence embedding returns a near-identical vector for every
+one of them and a model fit on it has nothing to separate. Subtracting the
+reference removes whatever is constant across a position's ~19 substitutions,
+leaving the substitution's own effect (measured mean `|feature|` = 0.139).
+
+### Evaluation protocol for the embedding heads
+
+```bash
+.venv/bin/python scripts/embed_variants.py              # one-off, cached
+.venv/bin/python scripts/train_embeddings.py            # ridge + hist_gbm
+```
+
+80/20 split **grouped by residue position**, fixed seed, asserting zero shared
+positions rather than trusting it. Reported: MAE, Spearman, Pearson, and an
+**in-range** metric — the share of validation variants whose prediction lands
+between that variant's two corrected replicates.
+
+**Read in-range carefully.** The replicate interval has a mean width of 0.0069
+against a response spanning ~0.12, so landing inside it is a demanding test. A
+low percentage means the model is not yet as precise as repeating the
+experiment, not that it is broken. The width is printed next to it so the two
+are never confused.
+
+### The "518-aa reference" trap, avoided
+
+The implementation plan this came from specified a *518-aa ABL1 reference*.
+**P00519 is 1130 aa.** Applying position 315 to a 518-residue sequence mutates
+the wrong residue in every row. `embed_variants.py` validates every variant
+against the reference residue before spending any compute and refuses the whole
+run on a mismatch — the difference between a result and 4,925 silently corrupted
+ones. This is the fourth numbering trap in this repo and the third that would
+have passed silently.
+
 ## The model — exactly what it is
 
 ### One sentence
