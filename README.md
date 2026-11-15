@@ -2,6 +2,8 @@
 
 ## Overall Research Question (Big Picture)
 
+We implement models to predict how cancel cells with mutant variants respond to cancer drug treatment. Given the mutated protein and the name of its mutation we predict if cell growth increases decreases or stays constant, this tells us how the cells respond to drug treatment. More cell growth indicates the drug treatment was not effective.
+
 Given an ABL1 amino-acid variant, can frozen protein-sequence embeddings predict whether BCR-ABL cell growth decreases, remains unchanged, or increases during fixed-dose imatinib treatment?
 
 ## Demo
