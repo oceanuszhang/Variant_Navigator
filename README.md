@@ -1,5 +1,12 @@
 # VariantNavigator: ABL1 Growth Direction
 
+## Team 
+
+Nicholas Pratt - University of California, Merced; Mohamed bin Zayed University of Artificial Intelligence (MBZUAI)
+Oceanus Zhang - University of California, Merced
+James Song - Emory University
+Franziska Tietze - University of California, Berkeley; Mohamed bin Zayed University of Artificial Intelligence (MBZUAI)
+
 ## Overall Research Question (Big Picture)
 
 We implement models to predict how cancel cells with mutant variants respond to cancer drug treatment. Given the mutated protein and the name of its mutation we predict if cell growth increases decreases or stays constant, this tells us how the cells respond to drug treatment. More cell growth indicates the drug treatment was not effective.
