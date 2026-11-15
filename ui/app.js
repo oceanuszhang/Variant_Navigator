@@ -52,11 +52,6 @@ async function predict() {
         $('probabilities').append(row);
       });
     }
-    $('heldout').innerHTML = data.held_out
-      ? '<strong>Independent held-out prediction: ' + label(data.held_out.prediction) +
-        '</strong><br>' + (data.held_out.correct ? 'Correct' : 'Incorrect') +
-        ' for this site-grouped validation row.'
-      : '<strong>Not a held-out demo row.</strong><br>This site was in the training partition; do not present this row as validation evidence.';
     $('message').textContent = data.deployment_scope;
     lastEstimate = null;
     $('run-boltz').disabled = true;
