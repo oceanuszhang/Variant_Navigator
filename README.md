@@ -32,6 +32,7 @@ Two model copies are deliberately kept separate:
 
 ## Input
 
+Dataset gathered from the manuscript: *Characterizing Variants of Uncertain Drug Resistance (VUDRs) Using Quantitative Measurements at Clinical Exposures* https://pubmed.ncbi.nlm.nih.gov/41279053/
 - Reference: `data/cancer-exp/ABL1_NM_005157.6_DMS_reference_aa.txt`
 - Dataset: `data/cancer-exp/high_imatinib_netgrowth_data.csv`
 - Treatment: 1,200 nM imatinib for six days
