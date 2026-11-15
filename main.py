@@ -78,7 +78,7 @@ def main() -> int:
         print(f"[1/2] Reusing {embeddings_path}", flush=True)
 
     print("[2/2] Training Ridge and XGBoost direction classifiers", flush=True)
-    metrics = train_and_evaluate(embeddings_path, output_dir)
+    metrics = train_and_evaluate(embeddings_path, output_dir, sequence_path)
 
     for model_name in ("majority_baseline", "ridge", "xgboost"):
         result = metrics["models"][model_name]

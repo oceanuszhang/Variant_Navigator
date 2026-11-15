@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>VariantNavigator</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<header>
+  <div class="brand">VariantNavigator <span>↗</span></div>
+  <div class="badge">ABL1 · imatinib · 1,200 nM</div>
+</header>
+<main>
+  <section class="hero">
+    <p class="eyebrow">VARIANT-DEPENDENT TREATMENT RESPONSE</p>
+    <h1>Will this variant let cells <em>grow</em> under treatment?</h1>
+    <p>Frozen ESM-2 embeddings with Ridge and XGBoost direction heads. The model predicts decrease, unchanged, or increase in corrected net growth.</p>
+  </section>
+
+  <section class="grid">
+    <div class="card input">
+      <h2>Choose an experimental variant</h2>
+      <label for="sequence">Reference amino-acid sequence</label>
+      <textarea id="sequence" rows="5" spellcheck="false" placeholder="Loading 518-aa ABL1 study reference…"></textarea>
+      <button id="load" class="quiet">Reload study reference</button>
+      <label for="variant">Variant</label>
+      <input id="variant" value="E450R" autocomplete="off" spellcheck="false">
+      <div class="quick">
+        <button data-variant="E450R">E450R · held out</button>
+        <button data-variant="T315I">T315I</button>
+        <button data-variant="H396P">H396P</button>
+      </div>
+      <label for="model">Prediction head</label>
+      <select id="model"><option value="xgboost">XGBoost</option><option value="ridge">Ridge</option></select>
+      <button id="predict" class="primary">Predict response</button>
+      <p id="message" class="note" role="status">The demo accepts substitutions present in the 4,925-row assay.</p>
+    </div>
+
+    <div class="card result">
+      <div class="result-head"><h2 id="result-title">Prediction</h2><span id="split" class="badge">Awaiting input</span></div>
+      <div class="directions">
+        <div><span>MODEL DIRECTION</span><strong id="predicted">—</strong></div>
+        <div><span>MEASURED DIRECTION</span><strong id="measured">—</strong></div>
+      </div>
+      <div id="probabilities" class="probabilities"></div>
+      <div class="measurement"><span>Measured corrected net growth</span><strong id="growth">—</strong></div>
+      <div id="heldout" class="callout">If this mutation site is in validation, its independent held-out prediction appears here.</div>
+      <p class="note">The all-data head powers the demo. Only the separate site-held-out prediction should be used as evidence of generalization.</p>
+    </div>
+  </section>
+
+  <section class="card validation">
+    <div class="section-head"><div><p class="eyebrow">SITE-GROUPED VALIDATION</p><h2>Generalization metrics</h2></div><span id="validation-count" class="badge">Loading</span></div>
+    <div id="metrics" class="metric-grid"></div>
+    <div class="two-col">
+      <div><h3>XGBoost confusion matrix</h3><div id="confusion"></div></div>
+      <div><h3>Evaluation contract</h3><ul><li>Split by residue position, not by individual substitution.</li><li>All variants at a held-out site remain outside training.</li><li>Primary metric: balanced accuracy across three response classes.</li></ul></div>
+    </div>
+  </section>
+
+  <section class="grid tools">
+    <div class="card">
+      <p class="eyebrow">PTARMIGAN-1</p>
+      <h2>Wild-type compound control</h2>
+      <p id="ptarmigan-note" class="note">Loading cached ABL1 results…</p>
+      <div id="ptarmigan"></div>
+    </div>
+    <div class="card">
+      <p class="eyebrow">BOLTZ-2.1 · OPTIONAL</p>
+      <h2>Structure and binding follow-up</h2>
+      <p>Request a free cost estimate for the selected mutant–imatinib complex. No structure job runs automatically.</p>
+      <button id="estimate" class="quiet">Get free Boltz estimate</button>
+      <button id="run-boltz" class="danger" disabled>Run paid job after estimate</button>
+      <p id="boltz-message" class="note">Paid submission requires a second click and explicit browser confirmation.</p>
+    </div>
+  </section>
+</main>
+<footer>Research prototype · Fixed-dose Ba/F3 assay · Not a clinical treatment recommendation</footer>
+<script src="app.js"></script>
+</body>
+</html>
+

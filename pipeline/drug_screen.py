@@ -94,26 +94,7 @@ def screen_panel(
     pocket_residues: list[int] | None = None,
 ) -> ScreenResult:
     """Score every drug in the panel against wildtype and mutant."""
-    drugs = load_panel(panel)
-    out = ScreenResult(gene=gene, variant=variant, panel=panel)
-    for drug in drugs:
-        wt = _call_ptarmigan(wt_sequence, drug["smiles"], pocket=pocket_residues)
-        mt = _call_ptarmigan(mt_sequence, drug["smiles"], pocket=pocket_residues)
-        delta = mt["affinity"] - wt["affinity"]
-        out.results.append(
-            DrugResult(
-                name=drug["name"],
-                smiles=drug["smiles"],
-                wt_affinity=wt["affinity"],
-                mt_affinity=mt["affinity"],
-                delta_affinity=delta,
-                verdict=classify(delta),
-                confidence=mt.get("confidence", 0.0),
-                metadata={k: drug[k] for k in ("target", "class", "approval") if k in drug},
-            )
-        )
-    return out
-
+    raise NotImplementedError("Ptarmigan catalog screens cannot score mutant sequences; use wild-type results as controls only")
 
 def available() -> bool:
-    return bool(os.getenv("PTARMIGAN_API_KEY"))
+    return False  # Mutant screening is unsupported by this service.

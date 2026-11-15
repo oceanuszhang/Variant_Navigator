@@ -1,0 +1,23 @@
+{
+  "task": "three-class direction prediction",
+  "row_count": 4925,
+  "embedding_dimensions": 480,
+  "neutral_threshold": 0.01,
+  "class_names": [
+    "decrease",
+    "unchanged",
+    "increase"
+  ],
+  "deployment_training_scope": "all 4,925 experimental rows",
+  "evaluation_scope": "site-grouped held-out split; deployment predictions are not evaluation",
+  "embeddings_sha256": "7273c95fd3559e9577a2b7fd4d68b6feef780c0a6f5447c231f72bb6fc6c2341",
+  "reference_sha256": "eaa9a6b20a9c44cfca874323f2c9bd50e67f9a97a73e3744fcedcba502b45aab",
+  "ridge_model_sha256": "0df09b4adc4bee0dc333e1c7d305eafa291730e1ea7851c6ec771f76586e14d6",
+  "xgboost_model_sha256": "deeb194e3c004eb930bfaa06e65f688f6a795c57d6511fb8da15e75e9b1e8edc",
+  "versions": {
+    "numpy": "2.5.4",
+    "scikit-learn": "1.9.1",
+    "xgboost": "3.4.1",
+    "joblib": "1.6.0"
+  }
+}
