@@ -4,6 +4,12 @@
 
 Given an ABL1 amino-acid variant, can frozen protein-sequence embeddings predict whether BCR-ABL cell growth decreases, remains unchanged, or increases during fixed-dose imatinib treatment?
 
+## Demo
+
+<video src="assets/variantnavigator_demo.mp4" controls width="100%"></video>
+
+[▶ Watch the 55-second VariantNavigator demo](assets/variantnavigator_demo.mp4)
+
 ## Specific Targeted Approach
 
 Reconstruct 4,925 full mutant proteins from the 518-amino-acid study reference. Use frozen ESM-2 35M to represent each mutation as a 480-dimensional mutant-minus-reference vector at the altered residue. Train Ridge and XGBoost direction classifiers.
