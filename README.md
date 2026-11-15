@@ -6,6 +6,8 @@ Given an ABL1 amino-acid variant, can frozen protein-sequence embeddings predict
 
 ## Demo
 
+Please download the short mp4 demo video
+
 <video src="assets/variantnavigator_demo.mp4" controls width="100%"></video>
 
 [▶ Watch the 55-second VariantNavigator demo](assets/variantnavigator_demo.mp4)
