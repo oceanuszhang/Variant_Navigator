@@ -1,4 +1,4 @@
-"""Train and evaluate Ridge and XGBoost heads on frozen ESM-2 features."""
+"""Train and evaluate three-class treatment-response heads."""
 
 from __future__ import annotations
 
@@ -8,33 +8,59 @@ from pathlib import Path
 
 import joblib
 import numpy as np
-from sklearn.linear_model import Ridge
-from sklearn.metrics import mean_absolute_error
+from sklearn.linear_model import RidgeClassifier
+from sklearn.metrics import (
+    accuracy_score,
+    balanced_accuracy_score,
+    confusion_matrix,
+    f1_score,
+)
 from sklearn.model_selection import GroupShuffleSplit
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
-from xgboost import XGBRegressor
+from sklearn.utils.class_weight import compute_sample_weight
+from xgboost import XGBClassifier
 
 RANDOM_SEED = 42
+NEUTRAL_THRESHOLD = 0.01
+CLASS_NAMES = np.asarray(["decrease", "unchanged", "increase"])
 
 
-def _model_metrics(
+def response_classes(values: np.ndarray) -> np.ndarray:
+    """Convert corrected net growth to decrease/unchanged/increase labels."""
+    return np.where(
+        values < -NEUTRAL_THRESHOLD,
+        0,
+        np.where(values > NEUTRAL_THRESHOLD, 2, 1),
+    ).astype(np.int32)
+
+
+def _class_counts(labels: np.ndarray) -> dict[str, int]:
+    counts = np.bincount(labels, minlength=len(CLASS_NAMES))
+    return {name: int(count) for name, count in zip(CLASS_NAMES, counts, strict=True)}
+
+
+def _classification_metrics(
     measured: np.ndarray,
     predictions: np.ndarray,
-    replicate_1: np.ndarray,
-    replicate_2: np.ndarray,
-) -> tuple[dict[str, float | int], np.ndarray, np.ndarray]:
-    lower = np.minimum(replicate_1, replicate_2)
-    upper = np.maximum(replicate_1, replicate_2)
-    in_range = (predictions >= lower) & (predictions <= upper)
-    absolute_error = np.abs(predictions - measured)
-    metrics: dict[str, float | int] = {
+) -> dict[str, object]:
+    opposite = ((measured == 0) & (predictions == 2)) | (
+        (measured == 2) & (predictions == 0)
+    )
+    return {
         "validation_rows": int(len(measured)),
-        "in_range_count": int(in_range.sum()),
-        "in_range_percent": float(100.0 * in_range.mean()),
-        "mean_absolute_error": float(mean_absolute_error(measured, predictions)),
+        "correct_count": int((measured == predictions).sum()),
+        "accuracy": float(accuracy_score(measured, predictions)),
+        "balanced_accuracy": float(balanced_accuracy_score(measured, predictions)),
+        "macro_f1": float(f1_score(measured, predictions, average="macro")),
+        "opposite_direction_count": int(opposite.sum()),
+        "opposite_direction_percent": float(100.0 * opposite.mean()),
+        "confusion_matrix": confusion_matrix(
+            measured,
+            predictions,
+            labels=np.arange(len(CLASS_NAMES)),
+        ).tolist(),
     }
-    return metrics, in_range, absolute_error
 
 
 def train_and_evaluate(embeddings_path: str | Path, output_dir: str | Path) -> dict:
@@ -58,8 +84,11 @@ def train_and_evaluate(embeddings_path: str | Path, output_dir: str | Path) -> d
     if not np.isfinite(features).all() or not np.isfinite(target).all():
         raise ValueError("embeddings or targets contain non-finite values")
 
+    labels = response_classes(target)
     splitter = GroupShuffleSplit(n_splits=1, test_size=0.20, random_state=RANDOM_SEED)
-    train_index, validation_index = next(splitter.split(features, target, groups=positions))
+    train_index, validation_index = next(
+        splitter.split(features, labels, groups=positions)
+    )
 
     train_positions = set(positions[train_index].tolist())
     validation_positions = set(positions[validation_index].tolist())
@@ -68,18 +97,23 @@ def train_and_evaluate(embeddings_path: str | Path, output_dir: str | Path) -> d
         raise RuntimeError(f"position leakage between splits: {sorted(overlap)}")
 
     x_train = features[train_index]
-    y_train = target[train_index]
+    y_train = labels[train_index]
     x_validation = features[validation_index]
-    y_validation = target[validation_index]
+    y_validation = labels[validation_index]
 
     ridge = Pipeline(
         [
             ("scale", StandardScaler()),
-            ("regressor", Ridge(alpha=1.0)),
+            (
+                "classifier",
+                RidgeClassifier(alpha=1.0, class_weight="balanced"),
+            ),
         ]
     )
-    xgboost = XGBRegressor(
-        objective="reg:squarederror",
+    xgboost = XGBClassifier(
+        objective="multi:softprob",
+        num_class=len(CLASS_NAMES),
+        eval_metric="mlogloss",
         n_estimators=300,
         learning_rate=0.05,
         max_depth=4,
@@ -92,25 +126,28 @@ def train_and_evaluate(embeddings_path: str | Path, output_dir: str | Path) -> d
     )
 
     ridge.fit(x_train, y_train)
-    xgboost.fit(x_train, y_train)
-
-    ridge_predictions = ridge.predict(x_validation)
-    xgboost_predictions = xgboost.predict(x_validation)
-
-    ridge_metrics, ridge_in_range, ridge_error = _model_metrics(
-        y_validation,
-        ridge_predictions,
-        replicate_1[validation_index],
-        replicate_2[validation_index],
+    xgboost.fit(
+        x_train,
+        y_train,
+        sample_weight=compute_sample_weight(class_weight="balanced", y=y_train),
     )
-    xgboost_metrics, xgboost_in_range, xgboost_error = _model_metrics(
-        y_validation,
-        xgboost_predictions,
-        replicate_1[validation_index],
-        replicate_2[validation_index],
-    )
+
+    majority_class = int(np.bincount(y_train).argmax())
+    majority_predictions = np.full(len(validation_index), majority_class, dtype=np.int32)
+    ridge_predictions = ridge.predict(x_validation).astype(np.int32)
+    xgboost_predictions = xgboost.predict(x_validation).astype(np.int32)
+    xgboost_probabilities = xgboost.predict_proba(x_validation)
 
     metrics = {
+        "task": "three-class direction prediction",
+        "class_definition": {
+            "decrease": f"netgrowth_mean_corrected < -{NEUTRAL_THRESHOLD}",
+            "unchanged": (
+                f"-{NEUTRAL_THRESHOLD} <= netgrowth_mean_corrected "
+                f"<= {NEUTRAL_THRESHOLD}"
+            ),
+            "increase": f"netgrowth_mean_corrected > {NEUTRAL_THRESHOLD}",
+        },
         "split": {
             "random_seed": RANDOM_SEED,
             "strategy": "80/20 GroupShuffleSplit grouped by protein_start",
@@ -118,19 +155,21 @@ def train_and_evaluate(embeddings_path: str | Path, output_dir: str | Path) -> d
             "validation_rows": int(len(validation_index)),
             "training_positions": len(train_positions),
             "validation_positions": len(validation_positions),
+            "training_class_counts": _class_counts(y_train),
+            "validation_class_counts": _class_counts(y_validation),
         },
-        "range_definition": (
-            "prediction is between netgr_corr_rep1.high and "
-            "netgr_corr_rep2.high, inclusive"
-        ),
+        "primary_metric": "exact three-class accuracy",
         "models": {
-            "ridge": ridge_metrics,
-            "xgboost": xgboost_metrics,
+            "majority_baseline": _classification_metrics(
+                y_validation,
+                majority_predictions,
+            ),
+            "ridge": _classification_metrics(y_validation, ridge_predictions),
+            "xgboost": _classification_metrics(y_validation, xgboost_predictions),
         },
     }
 
-    metrics_path = output_dir / "metrics.json"
-    metrics_path.write_text(json.dumps(metrics, indent=2) + "\n")
+    (output_dir / "metrics.json").write_text(json.dumps(metrics, indent=2) + "\n")
 
     predictions_path = output_dir / "validation_predictions.csv"
     with predictions_path.open("w", newline="") as handle:
@@ -142,20 +181,20 @@ def train_and_evaluate(embeddings_path: str | Path, output_dir: str | Path) -> d
             "measured_netgrowth",
             "replicate_1",
             "replicate_2",
-            "replicate_lower",
-            "replicate_upper",
+            "measured_class",
+            "majority_prediction",
+            "majority_correct",
             "ridge_prediction",
-            "ridge_absolute_error",
-            "ridge_in_range",
+            "ridge_correct",
             "xgboost_prediction",
-            "xgboost_absolute_error",
-            "xgboost_in_range",
+            "xgboost_correct",
+            "xgboost_probability_decrease",
+            "xgboost_probability_unchanged",
+            "xgboost_probability_increase",
         ]
         writer = csv.DictWriter(handle, fieldnames=fieldnames)
         writer.writeheader()
         for local_row, source_row in enumerate(validation_index):
-            low = min(replicate_1[source_row], replicate_2[source_row])
-            high = max(replicate_1[source_row], replicate_2[source_row])
             writer.writerow(
                 {
                     "mutant": mutant[source_row],
@@ -165,14 +204,28 @@ def train_and_evaluate(embeddings_path: str | Path, output_dir: str | Path) -> d
                     "measured_netgrowth": float(target[source_row]),
                     "replicate_1": float(replicate_1[source_row]),
                     "replicate_2": float(replicate_2[source_row]),
-                    "replicate_lower": float(low),
-                    "replicate_upper": float(high),
-                    "ridge_prediction": float(ridge_predictions[local_row]),
-                    "ridge_absolute_error": float(ridge_error[local_row]),
-                    "ridge_in_range": bool(ridge_in_range[local_row]),
-                    "xgboost_prediction": float(xgboost_predictions[local_row]),
-                    "xgboost_absolute_error": float(xgboost_error[local_row]),
-                    "xgboost_in_range": bool(xgboost_in_range[local_row]),
+                    "measured_class": CLASS_NAMES[y_validation[local_row]],
+                    "majority_prediction": CLASS_NAMES[majority_predictions[local_row]],
+                    "majority_correct": bool(
+                        majority_predictions[local_row] == y_validation[local_row]
+                    ),
+                    "ridge_prediction": CLASS_NAMES[ridge_predictions[local_row]],
+                    "ridge_correct": bool(
+                        ridge_predictions[local_row] == y_validation[local_row]
+                    ),
+                    "xgboost_prediction": CLASS_NAMES[xgboost_predictions[local_row]],
+                    "xgboost_correct": bool(
+                        xgboost_predictions[local_row] == y_validation[local_row]
+                    ),
+                    "xgboost_probability_decrease": float(
+                        xgboost_probabilities[local_row, 0]
+                    ),
+                    "xgboost_probability_unchanged": float(
+                        xgboost_probabilities[local_row, 1]
+                    ),
+                    "xgboost_probability_increase": float(
+                        xgboost_probabilities[local_row, 2]
+                    ),
                 }
             )
 

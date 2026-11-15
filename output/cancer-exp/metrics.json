@@ -1,25 +1,107 @@
 {
+  "task": "three-class direction prediction",
+  "class_definition": {
+    "decrease": "netgrowth_mean_corrected < -0.01",
+    "unchanged": "-0.01 <= netgrowth_mean_corrected <= 0.01",
+    "increase": "netgrowth_mean_corrected > 0.01"
+  },
   "split": {
     "random_seed": 42,
     "strategy": "80/20 GroupShuffleSplit grouped by protein_start",
     "training_rows": 3981,
     "validation_rows": 944,
     "training_positions": 216,
-    "validation_positions": 54
+    "validation_positions": 54,
+    "training_class_counts": {
+      "decrease": 2833,
+      "unchanged": 668,
+      "increase": 480
+    },
+    "validation_class_counts": {
+      "decrease": 664,
+      "unchanged": 148,
+      "increase": 132
+    }
   },
-  "range_definition": "prediction is between netgr_corr_rep1.high and netgr_corr_rep2.high, inclusive",
+  "primary_metric": "exact three-class accuracy",
   "models": {
+    "majority_baseline": {
+      "validation_rows": 944,
+      "correct_count": 664,
+      "accuracy": 0.7033898305084746,
+      "balanced_accuracy": 0.3333333333333333,
+      "macro_f1": 0.2752902155887231,
+      "opposite_direction_count": 132,
+      "opposite_direction_percent": 13.983050847457626,
+      "confusion_matrix": [
+        [
+          664,
+          0,
+          0
+        ],
+        [
+          148,
+          0,
+          0
+        ],
+        [
+          132,
+          0,
+          0
+        ]
+      ]
+    },
     "ridge": {
       "validation_rows": 944,
-      "in_range_count": 88,
-      "in_range_percent": 9.322033898305085,
-      "mean_absolute_error": 0.021912304684519768
+      "correct_count": 393,
+      "accuracy": 0.4163135593220339,
+      "balanced_accuracy": 0.38377959010489127,
+      "macro_f1": 0.34457656724343105,
+      "opposite_direction_count": 191,
+      "opposite_direction_percent": 20.233050847457626,
+      "confusion_matrix": [
+        [
+          293,
+          220,
+          151
+        ],
+        [
+          52,
+          58,
+          38
+        ],
+        [
+          40,
+          50,
+          42
+        ]
+      ]
     },
     "xgboost": {
       "validation_rows": 944,
-      "in_range_count": 114,
-      "in_range_percent": 12.076271186440678,
-      "mean_absolute_error": 0.01892682909965515
+      "correct_count": 621,
+      "accuracy": 0.6578389830508474,
+      "balanced_accuracy": 0.42654113587848536,
+      "macro_f1": 0.4341774410786748,
+      "opposite_direction_count": 127,
+      "opposite_direction_percent": 13.453389830508474,
+      "confusion_matrix": [
+        [
+          559,
+          68,
+          37
+        ],
+        [
+          96,
+          39,
+          13
+        ],
+        [
+          90,
+          19,
+          23
+        ]
+      ]
     }
   }
 }
